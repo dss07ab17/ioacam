@@ -1,0 +1,44 @@
+{
+  "name": "11_robot_attestation_mismatch",
+  "description": "Controller claims it is running; observed motion never corroborates it.",
+  "final_tick_s": 30,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "robot_bus",
+      "sensor_id": "plc-line3",
+      "observation": "robot_program",
+      "value": "PROG_07",
+      "confidence": 1.0,
+      "zone_id": "zone-robot-cell-3",
+      "subject": {
+        "class": "robot",
+        "asset_id": "robot-cell-3"
+      }
+    },
+    {
+      "t_s": 1,
+      "source": "robot_bus",
+      "sensor_id": "plc-line3",
+      "observation": "robot_state",
+      "value": "RUNNING",
+      "confidence": 1.0,
+      "zone_id": "zone-robot-cell-3",
+      "subject": {
+        "class": "robot",
+        "asset_id": "robot-cell-3"
+      }
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "deviation": "skipped",
+      "step_id": "r2",
+      "workflow_id": "wf-robot-cell-3-attestation",
+      "severity": "critical",
+      "response": "alarm_escalate_and_request_mitigation"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

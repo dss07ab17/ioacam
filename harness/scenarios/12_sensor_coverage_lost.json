@@ -1,0 +1,53 @@
+{
+  "name": "12_sensor_coverage_lost",
+  "description": "A zone nobody can see must report unknown, never conformant.",
+  "final_tick_s": 15,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "timer",
+      "sensor_id": "cam-02",
+      "observation": "sensor_health",
+      "value": "unhealthy",
+      "confidence": 1.0
+    },
+    {
+      "t_s": 5,
+      "source": "timer",
+      "sensor_id": "cam-01",
+      "observation": "sensor_health",
+      "value": "unhealthy",
+      "confidence": 1.0
+    },
+    {
+      "t_s": 10,
+      "source": "timer",
+      "sensor_id": "radar-01",
+      "observation": "sensor_health",
+      "value": "unhealthy",
+      "confidence": 1.0
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "unknown",
+      "zone_id": "zone-assembly-4",
+      "severity": "critical",
+      "route": "maintenance",
+      "detail_contains": "coverage lost"
+    },
+    {
+      "verdict": "unknown",
+      "zone_id": "zone-robot-cell-3",
+      "severity": "critical",
+      "route": "maintenance",
+      "detail_contains": "coverage lost"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "conformant"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

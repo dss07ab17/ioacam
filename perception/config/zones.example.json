@@ -1,0 +1,55 @@
+{
+  "sensor_id": "cam-01",
+
+  "camera": {
+    "index": 0,
+    "width": 1280,
+    "height": 720,
+    "fps": 15
+  },
+
+  "detector": {
+    "backend": "yolox-onnx",
+    "model_path": "perception/models/yolox_tiny.onnx",
+    "input_size": [416, 416],
+    "score_threshold": 0.30,
+    "nms_threshold": 0.45,
+    "p6": false,
+    "acknowledge_agpl": false
+  },
+
+  "calibration": {
+    "temperature": 1.8
+  },
+
+  "tracking": {
+    "iou_threshold": 0.30,
+    "max_misses": 15
+  },
+
+  "zones": [
+    {
+      "zone_id": "zone-assembly-4",
+      "coordinates": "normalized",
+      "polygon": [[0.08, 0.42], [0.55, 0.36], [0.72, 1.0], [0.04, 1.0]]
+    }
+  ],
+
+  "emission": {
+    "enter_frames": 5,
+    "exit_frames": 10,
+    "persistence_window": 30,
+    "min_confidence": 0.05,
+    "emit_person_count": true,
+    "count_debounce_frames": 8
+  },
+
+  "quality": {
+    "reference_height_px": 220,
+    "min_height_px": 40
+  },
+
+  "integrity": {
+    "enabled": false
+  }
+}

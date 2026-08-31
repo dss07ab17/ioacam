@@ -1,0 +1,50 @@
+{
+  "name": "06_wrong_role",
+  "description": "Step performed correctly by the wrong role, seen clearly. Enforce mode.",
+  "mode_override": "enforce",
+  "final_tick_s": 20,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-9012",
+        "role": "maintenance_engineer"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.92,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-9012",
+        "role": "maintenance_engineer"
+      },
+      "track_id": "trk-0448"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "deviation": "wrong_role",
+      "step_id": "s1",
+      "severity": "critical",
+      "conf_min": 0.9,
+      "response": "alarm_escalate_and_request_mitigation",
+      "suppressed": false
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

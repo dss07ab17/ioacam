@@ -1,0 +1,342 @@
+{
+  "policy_id": "pol-plant-a-line3",
+  "version": "0.1.0",
+  "site_id": "plant-a",
+  "mode": "shadow",
+  "calibration": {
+    "fitted_at": "2026-09-15T09:00:00Z",
+    "temperature": 1.8,
+    "expected_calibration_error": 0.041
+  },
+  "zones": [
+    {
+      "zone_id": "zone-assembly-4",
+      "name": "Assembly station 4",
+      "criticality": "restricted",
+      "allowed_roles": [
+        "operator",
+        "supervisor",
+        "maintenance_engineer"
+      ],
+      "time_windows": [
+        {
+          "days": [
+            "mon",
+            "tue",
+            "wed",
+            "thu",
+            "fri"
+          ],
+          "start": "06:00",
+          "end": "22:00"
+        }
+      ],
+      "max_occupancy": 3,
+      "covered_by": [
+        "cam-01"
+      ]
+    },
+    {
+      "zone_id": "zone-robot-cell-3",
+      "name": "Robot cell 3",
+      "criticality": "safety_critical",
+      "allowed_roles": [
+        "maintenance_engineer"
+      ],
+      "time_windows": [
+        {
+          "days": [
+            "mon",
+            "tue",
+            "wed",
+            "thu",
+            "fri"
+          ],
+          "start": "22:00",
+          "end": "23:59"
+        }
+      ],
+      "max_occupancy": 1,
+      "covered_by": [
+        "cam-02",
+        "radar-01"
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "workflow_id": "wf-assembly-station-4",
+      "name": "Station 4 assembly cycle",
+      "actor_class": "human",
+      "trigger": {
+        "observation": "object_at_station",
+        "zone_id": "zone-assembly-4",
+        "value": true
+      },
+      "instance_timeout_s": 600,
+      "steps": [
+        {
+          "step_id": "s1",
+          "name": "Operator present with PPE",
+          "predecessors": [],
+          "actor_role": "operator",
+          "zone_id": "zone-assembly-4",
+          "evidence": [
+            {
+              "observation": "person_in_zone",
+              "value": true,
+              "min_confidence": 0.6
+            },
+            {
+              "observation": "ppe_helmet",
+              "value": true,
+              "min_confidence": 0.7
+            },
+            {
+              "observation": "ppe_glasses",
+              "value": true,
+              "min_confidence": 0.6
+            }
+          ],
+          "max_duration_s": 30,
+          "deviation_severity": {
+            "skipped": "critical",
+            "wrong_role": "critical",
+            "overrun": "informational"
+          },
+          "overrun_tolerance_s": 10
+        },
+        {
+          "step_id": "s2",
+          "name": "Part loaded into fixture",
+          "predecessors": [
+            "s1"
+          ],
+          "actor_role": "operator",
+          "zone_id": "zone-assembly-4",
+          "evidence": [
+            {
+              "observation": "object_at_station",
+              "value": "part_in_fixture",
+              "min_confidence": 0.7
+            }
+          ],
+          "min_duration_s": 3,
+          "max_duration_s": 45,
+          "deviation_severity": {
+            "skipped": "critical",
+            "out_of_order": "warning",
+            "underrun": "warning",
+            "overrun": "informational"
+          },
+          "underrun_tolerance_s": 1,
+          "overrun_tolerance_s": 15
+        },
+        {
+          "step_id": "s3",
+          "name": "Torque operation",
+          "predecessors": [
+            "s2"
+          ],
+          "actor_role": "operator",
+          "zone_id": "zone-assembly-4",
+          "evidence": [
+            {
+              "observation": "machine_state",
+              "value": "TORQUE_CYCLE_COMPLETE",
+              "min_confidence": 1.0
+            }
+          ],
+          "min_duration_s": 8,
+          "max_duration_s": 40,
+          "deviation_severity": {
+            "skipped": "critical",
+            "out_of_order": "critical",
+            "underrun": "critical",
+            "overrun": "warning",
+            "repeated": "warning"
+          },
+          "underrun_tolerance_s": 3,
+          "overrun_tolerance_s": 10
+        },
+        {
+          "step_id": "s4",
+          "name": "Visual quality inspection",
+          "predecessors": [
+            "s3"
+          ],
+          "actor_role": "operator",
+          "zone_id": "zone-assembly-4",
+          "evidence": [
+            {
+              "observation": "person_in_zone",
+              "value": true,
+              "min_confidence": 0.6
+            },
+            {
+              "observation": "action_recognised",
+              "value": "inspection",
+              "min_confidence": 0.6
+            }
+          ],
+          "min_duration_s": 5,
+          "max_duration_s": 60,
+          "deviation_severity": {
+            "skipped": "critical",
+            "underrun": "warning",
+            "overrun": "informational"
+          },
+          "underrun_tolerance_s": 2,
+          "overrun_tolerance_s": 20
+        },
+        {
+          "step_id": "s5",
+          "name": "Part removed, station clear",
+          "predecessors": [
+            "s4"
+          ],
+          "actor_role": "operator",
+          "zone_id": "zone-assembly-4",
+          "evidence": [
+            {
+              "observation": "object_removed",
+              "value": true,
+              "min_confidence": 0.7
+            }
+          ],
+          "max_duration_s": 30,
+          "deviation_severity": {
+            "skipped": "warning",
+            "incomplete": "warning"
+          },
+          "overrun_tolerance_s": 15
+        }
+      ]
+    },
+    {
+      "workflow_id": "wf-robot-cell-3-attestation",
+      "name": "Robot cell 3 claimed-vs-observed cross-check",
+      "actor_class": "robot",
+      "trigger": {
+        "observation": "robot_program",
+        "zone_id": "zone-robot-cell-3"
+      },
+      "instance_timeout_s": 300,
+      "steps": [
+        {
+          "step_id": "r1",
+          "name": "Controller reports running program",
+          "predecessors": [],
+          "zone_id": "zone-robot-cell-3",
+          "evidence": [
+            {
+              "observation": "robot_state",
+              "value": "RUNNING",
+              "min_confidence": 1.0
+            }
+          ],
+          "max_duration_s": 5,
+          "deviation_severity": {
+            "skipped": "warning"
+          },
+          "overrun_tolerance_s": 0
+        },
+        {
+          "step_id": "r2",
+          "name": "Observed motion consistent with claimed program",
+          "predecessors": [
+            "r1"
+          ],
+          "zone_id": "zone-robot-cell-3",
+          "evidence": [
+            {
+              "observation": "action_recognised",
+              "value": "motion_matches_program",
+              "min_confidence": 0.7
+            }
+          ],
+          "max_duration_s": 20,
+          "deviation_severity": {
+            "skipped": "critical",
+            "incomplete": "critical"
+          },
+          "overrun_tolerance_s": 5
+        }
+      ]
+    }
+  ],
+  "response_matrix": [
+    {
+      "verdict": "violation",
+      "severity": "safety_relevant",
+      "min_confidence": 0.0,
+      "response": "alarm_escalate_and_request_mitigation",
+      "retain_evidence": true,
+      "route": "safety_emergency"
+    },
+    {
+      "verdict": "violation",
+      "severity": "critical",
+      "min_confidence": 0.85,
+      "response": "alarm_escalate_and_request_mitigation",
+      "retain_evidence": true,
+      "route": "soc_security"
+    },
+    {
+      "verdict": "violation",
+      "severity": "critical",
+      "min_confidence": 0.5,
+      "max_confidence": 0.85,
+      "response": "log_and_notify_operator",
+      "retain_evidence": true,
+      "route": "soc_security"
+    },
+    {
+      "verdict": "violation",
+      "severity": "critical",
+      "max_confidence": 0.5,
+      "response": "log_and_queue_review",
+      "retain_evidence": true,
+      "route": "review_queue"
+    },
+    {
+      "verdict": "violation",
+      "severity": "warning",
+      "min_confidence": 0.85,
+      "response": "log_notify_soc",
+      "retain_evidence": true,
+      "route": "soc_security"
+    },
+    {
+      "verdict": "violation",
+      "severity": "warning",
+      "max_confidence": 0.85,
+      "response": "log_only",
+      "route": "review_queue"
+    },
+    {
+      "verdict": "violation",
+      "severity": "informational",
+      "response": "log_only",
+      "route": "review_queue"
+    },
+    {
+      "verdict": "unknown",
+      "severity": "any",
+      "response": "log_and_queue_review",
+      "retain_evidence": true,
+      "route": "review_queue"
+    },
+    {
+      "verdict": "tolerated",
+      "severity": "any",
+      "response": "log_only",
+      "route": "review_queue"
+    },
+    {
+      "verdict": "conformant",
+      "severity": "any",
+      "response": "none"
+    }
+  ]
+}

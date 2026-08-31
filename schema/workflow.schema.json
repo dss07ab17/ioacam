@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a3isystems.com/ioacam/schema/workflow.schema.json",
+  "title": "iOACAM Declared Workflow Policy",
+  "description": "A signed, versioned declaration of what is supposed to happen at a site. The engine compares observation events against this file and produces verdicts. Because an attacker who edits this file turns 'violation' into 'conformant', this file MUST be signed and its version anchored in the TPM alongside the model versions.",
+  "type": "object",
+  "required": ["policy_id", "version", "site_id", "mode", "zones", "workflows", "response_matrix"],
+  "additionalProperties": false,
+
+  "properties": {
+
+    "policy_id": {
+      "type": "string",
+      "description": "Stable id for this policy across revisions."
+    },
+
+    "version": {
+      "type": "string",
+      "description": "Monotonically increasing version string. Recorded on every event the engine emits, so that any alert can be traced to the exact policy that judged it."
+    },
+
+    "site_id": {
+      "type": "string",
+      "description": "Site this policy applies to. Policies are not portable between sites: camera geometry, layout and timings differ."
+    },
+
+    "mode": {
+      "type": "string",
+      "enum": ["shadow", "enforce"],
+      "description": "shadow: the engine evaluates fully and logs what it WOULD have done, but emits no alarms, no SOC escalation and no mitigation. enforce: responses are live. Every site starts in shadow. Switching to enforce is a deliberate, recorded commissioning decision made only after the logged output has been reviewed against reality."
+    },
+
+    "calibration": {
+      "type": "object",
+      "description": "Per-site confidence calibration. Must be re-fitted at each site because camera height, lens and lighting shift the score distribution. Stale calibration makes every threshold below meaningless.",
+      "additionalProperties": false,
+      "properties": {
+        "fitted_at": { "type": "string", "format": "date-time" },
+        "temperature": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Temperature-scaling parameter applied to raw model scores. > 1 softens an over-confident model."
+        },
+        "expected_calibration_error": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Measured ECE on the held-out site set. This is an ATP acceptance figure: if it is high, the response thresholds are arbitrary."
+        }
+      }
+    },
+
+    "zones": {
+      "type": "array",
+      "description": "Physical areas referenced by rules and steps.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["zone_id", "name", "criticality"],
+        "additionalProperties": false,
+        "properties": {
+          "zone_id": { "type": "string" },
+          "name": { "type": "string" },
+          "criticality": {
+            "type": "string",
+            "enum": ["public", "restricted", "critical", "safety_critical"],
+            "description": "Drives the default severity of access violations in this zone. safety_critical zones are ALSO protected by independent hard safety devices; iOACAM never acts as the safety function."
+          },
+          "allowed_roles": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Roles permitted in this zone. A subject whose role is not listed produces a violation with no perception ambiguity about the rule itself."
+          },
+          "time_windows": {
+            "type": "array",
+            "description": "When the allowed_roles list applies. Outside these windows, presence is a violation even for otherwise-permitted roles.",
+            "items": {
+              "type": "object",
+              "required": ["days", "start", "end"],
+              "additionalProperties": false,
+              "properties": {
+                "days": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["mon","tue","wed","thu","fri","sat","sun"] }
+                },
+                "start": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+                "end": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
+              }
+            }
+          },
+          "max_occupancy": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Occupancy above which a crowding or stampede-risk event is raised."
+          },
+          "covered_by": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Sensor ids that observe this zone. If none are healthy, the engine must degrade to 'unknown' for this zone rather than reporting 'conformant'."
+          }
+        }
+      }
+    },
+
+    "workflows": {
+      "type": "array",
+      "description": "The declared processes. Each is a state machine over steps. Anything observed that does not match a declared step is reported as 'unknown' and queued for review, never silently accepted.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["workflow_id", "name", "actor_class", "trigger", "steps"],
+        "additionalProperties": false,
+        "properties": {
+
+          "workflow_id": { "type": "string" },
+          "name": { "type": "string" },
+
+          "actor_class": {
+            "type": "string",
+            "enum": ["human", "machine", "robot", "nature"],
+            "description": "For machine and robot workflows, prefer bus telemetry as the primary evidence and use vision as a cross-check. A disagreement between claimed and observed state is itself a high-severity finding: it is the signature of a tampered or faulty controller."
+          },
+
+          "trigger": {
+            "type": "object",
+            "description": "What starts an instance of this workflow. Until triggered, the engine holds no instance and observations in scope are judged only against zone rules.",
+            "required": ["observation"],
+            "additionalProperties": false,
+            "properties": {
+              "observation": { "type": "string" },
+              "zone_id": { "type": "string" },
+              "value": {},
+              "role": { "type": "string" }
+            }
+          },
+
+          "instance_timeout_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Wall time after which an unfinished instance is closed and reported as incomplete. Prevents orphaned instances accumulating when an actor simply walks away."
+          },
+
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["step_id", "name", "evidence"],
+              "additionalProperties": false,
+              "properties": {
+
+                "step_id": { "type": "string" },
+                "name": { "type": "string" },
+
+                "predecessors": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Steps that must be complete before this one may legitimately start. Empty means it may start the instance. This is what makes out-of-order detection possible."
+                },
+
+                "actor_role": {
+                  "type": "string",
+                  "description": "Role permitted to perform this step. A different role performing it correctly is still a violation."
+                },
+
+                "zone_id": { "type": "string" },
+
+                "optional": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "If true, absence of this step is not a deviation. Use sparingly; over-use of optional is how a workflow model quietly stops detecting anything."
+                },
+
+                "evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "The observations that constitute proof this step occurred. ALL must be satisfied. Keep these to the reliable primitives (presence, zone, count, PPE, object at station, bus state) wherever possible; fine-grained action recognition is the least dependable evidence type and should not be the sole proof of a critical step.",
+                  "items": {
+                    "type": "object",
+                    "required": ["observation"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "observation": { "type": "string" },
+                      "value": {},
+                      "min_confidence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "default": 0.5,
+                        "description": "Evidence below this confidence does not count as proof. It is still logged."
+                      }
+                    }
+                  }
+                },
+
+                "min_duration_s": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Below this, the step was implausibly fast, which usually means it was faked or skipped rather than performed."
+                },
+
+                "max_duration_s": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "Above this, the step has overrun. This is also the deadline whose expiry detects an OMITTED step, which no camera can see directly."
+                },
+
+                "duration_tolerance_s": {
+                  "type": "number",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "Default grace band for BOTH bounds, used when the specific tolerances below are absent. Prefer setting those instead: one value serving both bounds is a trap, because a grace appropriate to a long maximum is usually absurd against a short minimum, and a tolerance that meets or exceeds min_duration_s makes the underrun rule unreachable while the policy still looks complete."
+                },
+
+                "underrun_tolerance_s": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Grace below min_duration_s before an underrun is a violation rather than tolerated. Must be smaller than min_duration_s or the rule can never fire. Keep it tight: an implausibly fast step usually means the step was faked rather than performed, which is exactly what you want to catch."
+                },
+
+                "overrun_tolerance_s": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Grace above max_duration_s before an overrun is a violation rather than tolerated. This is also what extends the omission deadline, so a large value delays detection of a skipped step by the same amount. It is the field that most reduces false alarms during commissioning."
+                },
+
+                "deviation_severity": {
+                  "type": "object",
+                  "description": "Severity assigned to each way this step can go wrong. Severity is AUTHORED here, not computed at runtime, and is independent of confidence. The same physical event can be informational at one step and critical at another.",
+                  "additionalProperties": false,
+                  "properties": {
+                    "skipped":      { "$ref": "#/$defs/severity" },
+                    "out_of_order": { "$ref": "#/$defs/severity" },
+                    "overrun":      { "$ref": "#/$defs/severity" },
+                    "underrun":     { "$ref": "#/$defs/severity" },
+                    "wrong_role":   { "$ref": "#/$defs/severity" },
+                    "wrong_zone":   { "$ref": "#/$defs/severity" },
+                    "repeated":     { "$ref": "#/$defs/severity" },
+                    "incomplete":   { "$ref": "#/$defs/severity" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "response_matrix": {
+      "type": "array",
+      "description": "Maps (verdict, severity, confidence band) to a response. Evaluated top to bottom; the first matching row wins, so order specific rules before general ones. Confidence bands are set by working backwards from the site's agreed false-alarm budget per camera per day, not chosen arbitrarily.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["verdict", "response"],
+        "additionalProperties": false,
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": ["conformant", "tolerated", "violation", "unknown", "any"],
+            "description": "conformant: matches the declaration. tolerated: deviates within the declared grace band. violation: breaches the declaration. unknown: observed something not covered by the declaration, which is escalated for review rather than assumed benign."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["informational", "warning", "critical", "safety_relevant", "any"],
+            "default": "any"
+          },
+          "min_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+          "max_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0 },
+          "response": {
+            "type": "string",
+            "enum": [
+              "none",
+              "log_only",
+              "log_and_queue_review",
+              "log_and_notify_operator",
+              "log_notify_soc",
+              "alarm_and_escalate_soc",
+              "alarm_escalate_and_request_mitigation"
+            ],
+            "description": "Mitigation is only ever REQUESTED from the SOC. iOACAM does not autonomously actuate, and is never the safety function."
+          },
+          "retain_evidence": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to persist the rolling-buffer window for this event. Default false: conformant operation should leave no media behind."
+          },
+          "route": {
+            "type": "string",
+            "enum": ["soc_security", "safety_emergency", "maintenance", "review_queue"],
+            "default": "soc_security",
+            "description": "Nature and environment events route to safety_emergency, not to the SOC as security incidents. Sensor health and cross-check mismatches route to maintenance."
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["informational", "warning", "critical", "safety_relevant"]
+    }
+  }
+}

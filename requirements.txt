@@ -1,0 +1,18 @@
+# Core dependencies for iOACAM Workflow Engine
+
+# Perception layer (camera detection)
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Optional: For YOLOX model inference
+# Note: Already included in perception setup via fetch_model.py
+# onnxruntime>=1.16.0  # Uncomment if using ONNX-based detectors
+
+# Testing
+pytest>=7.4.0
+pytest-timeout>=2.2.0
+
+# Linting and type checking (optional, for development)
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0

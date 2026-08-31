@@ -1,0 +1,177 @@
+{
+  "name": "01_clean_run",
+  "description": "All five steps, in order, within duration. Nothing should fire.",
+  "final_tick_s": 120,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2.5,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_helmet",
+      "value": true,
+      "confidence": 0.88,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 3,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_glasses",
+      "value": true,
+      "confidence": 0.82,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 15,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": "part_in_fixture",
+      "confidence": 0.85,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 35,
+      "source": "machine_bus",
+      "sensor_id": "plc-line3",
+      "observation": "machine_state",
+      "value": "TORQUE_CYCLE_COMPLETE",
+      "confidence": 1.0,
+      "zone_id": "zone-assembly-4"
+    },
+    {
+      "t_s": 50,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 51,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "action_recognised",
+      "value": "inspection",
+      "confidence": 0.75,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 60,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_removed",
+      "value": true,
+      "confidence": 0.85,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "conformant",
+      "step_id": "s1",
+      "response": "none",
+      "suppressed": true
+    },
+    {
+      "verdict": "conformant",
+      "step_id": "s2",
+      "response": "none",
+      "suppressed": true
+    },
+    {
+      "verdict": "conformant",
+      "step_id": "s3",
+      "response": "none",
+      "suppressed": true
+    },
+    {
+      "verdict": "conformant",
+      "step_id": "s4",
+      "response": "none",
+      "suppressed": true
+    },
+    {
+      "verdict": "conformant",
+      "step_id": "s5",
+      "response": "none",
+      "suppressed": true
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "violation"
+    },
+    {
+      "verdict": "unknown"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

@@ -1,0 +1,92 @@
+{
+  "name": "09_unknown_observation",
+  "description": "Something happened that the declaration does not cover. Never treated as conformant.",
+  "final_tick_s": 25,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2.5,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_helmet",
+      "value": true,
+      "confidence": 0.88,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 3,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_glasses",
+      "value": true,
+      "confidence": 0.82,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 20,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "action_recognised",
+      "value": "unexpected_activity",
+      "confidence": 0.8,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "unknown",
+      "response": "log_and_queue_review",
+      "route": "review_queue",
+      "retain_evidence": true,
+      "detail_contains": "undeclared"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

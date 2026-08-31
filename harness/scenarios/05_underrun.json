@@ -1,0 +1,101 @@
+{
+  "name": "05_underrun",
+  "description": "Torque cycle completes implausibly fast: usually faked, not performed.",
+  "final_tick_s": 25,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2.5,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_helmet",
+      "value": true,
+      "confidence": 0.88,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 3,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_glasses",
+      "value": true,
+      "confidence": 0.82,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 15,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": "part_in_fixture",
+      "confidence": 0.85,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 17,
+      "source": "machine_bus",
+      "sensor_id": "plc-line3",
+      "observation": "machine_state",
+      "value": "TORQUE_CYCLE_COMPLETE",
+      "confidence": 1.0,
+      "zone_id": "zone-assembly-4"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "deviation": "underrun",
+      "step_id": "s3",
+      "severity": "critical",
+      "response": "alarm_escalate_and_request_mitigation"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

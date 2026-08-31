@@ -1,0 +1,55 @@
+{
+  "name": "10_low_confidence_violation",
+  "description": "Same violation as 06, seen poorly. Routed to a human instead of an alarm.",
+  "mode_override": "enforce",
+  "final_tick_s": 20,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-9012",
+        "role": "maintenance_engineer"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.6,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-9012",
+        "role": "maintenance_engineer"
+      },
+      "track_id": "trk-0448"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "deviation": "wrong_role",
+      "step_id": "s1",
+      "severity": "critical",
+      "conf_max": 0.85,
+      "response": "log_and_notify_operator",
+      "retain_evidence": true
+    }
+  ],
+  "forbid": [
+    {
+      "response": "alarm_escalate_and_request_mitigation"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

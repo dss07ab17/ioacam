@@ -1,0 +1,38 @@
+{
+  "name": "07_wrong_zone",
+  "description": "Operator in the robot cell. Zone rule is certain; only the identification is uncertain.",
+  "final_tick_s": 5,
+  "events": [
+    {
+      "t_s": 1,
+      "source": "camera",
+      "sensor_id": "cam-02",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-robot-cell-3",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "deviation": "wrong_zone",
+      "zone_id": "zone-robot-cell-3",
+      "severity": "safety_relevant",
+      "response": "alarm_escalate_and_request_mitigation",
+      "route": "safety_emergency"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "unknown"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

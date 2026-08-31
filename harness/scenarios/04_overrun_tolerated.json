@@ -1,0 +1,98 @@
+{
+  "name": "04_overrun_tolerated",
+  "description": "Load step overruns but stays inside the grace band. Logged, not alarmed.",
+  "final_tick_s": 55,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 2.5,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_helmet",
+      "value": true,
+      "confidence": 0.88,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 3,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_glasses",
+      "value": true,
+      "confidence": 0.82,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    },
+    {
+      "t_s": 53,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": "part_in_fixture",
+      "confidence": 0.85,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-0448"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "tolerated",
+      "deviation": "overrun",
+      "step_id": "s2",
+      "response": "log_only",
+      "route": "review_queue"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "violation",
+      "step_id": "s2"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}
