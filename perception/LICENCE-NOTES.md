@@ -110,7 +110,7 @@ Worth clearing now rather than in month four:
 |---|---|---|
 | GStreamer core | LGPL-2.1 | Fine when dynamically linked. **But plugin sets differ**: `gst-plugins-ugly` and parts of `-bad` pull in GPL code, and **x264 is GPL**. An H.264 encode path can quietly make the whole appliance GPL. Audit the exact plugin set you ship, not "GStreamer". |
 | ByteTrack | MIT | Clean. |
-| RTMPose (MMPose) | Apache-2.0 | Clean. |
+| RTMPose (MMPose) | Apache-2.0 | Code is clean, and `actions/rtmpose.py` uses it without installing MMPose at all. The **weights** are the question: the checkpoint in use is `rtmpose-tiny_simcc-aic-coco`, trained on COCO **and AI Challenger**. See `actions/LICENCE-NOTES.md`. |
 | ST-GCN | varies by implementation | The original and the several forks are not all licensed alike. Check the specific repo. |
 | OpenCV | Apache-2.0 (4.5+) | Clean. Note `opencv-contrib` includes non-free patented algorithms in some builds. |
 | ONNX Runtime | MIT | Clean, if you use it instead of OpenCV DNN. |

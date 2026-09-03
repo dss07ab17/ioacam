@@ -8,6 +8,32 @@
   },
   "detector": {
     "backend": "yolox-onnx",
+    "classes": [
+      "person",
+      "cell phone",
+      "laptop",
+      "bottle",
+      "cup",
+      "backpack",
+      "handbag",
+      "book",
+      "scissors",
+      "knife"
+    ],
+    "_comment_classes": "Which of YOLOX's 80 COCO classes this site cares about. 'person' drives tracking, zones and pose; the rest are objects, attributed to whoever is holding them. A different site wants a different list, which is why it lives here rather than in yolox_onnx.py. Only COCO names are valid -- the model knows nothing else, and a site-specific object (a torque wrench, a specific tool) needs a detector trained on it. An unknown name is rejected at construction rather than silently returning nothing.",
+    "class_thresholds": {
+      "person": 0.35,
+      "cell phone": 0.5,
+      "laptop": 0.5,
+      "bottle": 0.5,
+      "cup": 0.5,
+      "backpack": 0.5,
+      "handbag": 0.55,
+      "book": 0.55,
+      "scissors": 0.55,
+      "knife": 0.6
+    },
+    "_comment_class_thresholds": "One threshold cannot serve a person filling the frame and a phone 40 px across. Small objects score lower when they are really there AND produce more false positives, so each class gets its own floor. 'knife' and 'scissors' are highest deliberately: COCO confuses them with pens, cutlery and phone edges, and a false knife is the most expensive false positive in this list. Tune these against a logged run (preview_pose.py --objects --log) before trusting any of them.",
     "model_path": "perception/models/yolox_tiny.onnx",
     "input_size": [
       416,

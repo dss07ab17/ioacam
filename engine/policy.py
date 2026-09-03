@@ -223,6 +223,10 @@ class Trigger:
         )
 
 
+# Event attributes that may be used to tell concurrent instances apart.
+CORRELATION_ATTRS = ("track_id", "subject.identity", "subject.asset_id", "zone_id")
+
+
 @dataclass
 class Workflow:
     workflow_id: str
@@ -232,6 +236,31 @@ class Workflow:
     steps: list[Step]
     instance_timeout_s: Optional[float] = None
 
+    # Ordered list of event attributes that identify which instance an event
+    # belongs to. Empty means singleton: one instance at a time, which is the
+    # original behaviour and still correct for workflows that genuinely cannot
+    # overlap.
+    correlation: list[str] = field(default_factory=list)
+
+    # Instances are created from observed events, so a tracker that churns ids
+    # would otherwise spawn them without bound. This caps memory and, more
+    # usefully, makes id churn visible instead of silent.
+    max_concurrent_instances: int = 8
+
+    # Silence, in seconds, before an instance is closed as correlation lost
+    # rather than accruing step violations. Default None (disabled), because
+    # it is only safe when the perception layer emits periodic liveness for
+    # active tracks. Without that, a legitimately long step looks identical to
+    # a lost subject, and enabling it would manufacture false closures.
+    correlation_timeout_s: Optional[float] = None
+
+    @property
+    def singleton(self) -> bool:
+        return not self.correlation
+
+    def zones(self) -> set[str]:
+        return {s.zone_id for s in self.steps if s.zone_id}
+
     def step(self, step_id: str) -> Step:
         for s in self.steps:
             if s.step_id == step_id:
@@ -239,6 +268,16 @@ class Workflow:
         raise KeyError(step_id)
 
     def validate(self) -> None:
+        for attr in self.correlation:
+            if attr not in CORRELATION_ATTRS:
+                raise PolicyError(
+                    f"{self.workflow_id}: correlation attribute '{attr}' is not one "
+                    f"of {list(CORRELATION_ATTRS)}"
+                )
+        if self.max_concurrent_instances < 1:
+            raise PolicyError(
+                f"{self.workflow_id}: max_concurrent_instances must be at least 1"
+            )
         ids = {s.step_id for s in self.steps}
         if len(ids) != len(self.steps):
             raise PolicyError(f"{self.workflow_id}: duplicate step_id")
@@ -274,6 +313,9 @@ class Workflow:
             trigger=Trigger.from_dict(d["trigger"]),
             steps=[Step.from_dict(s) for s in d["steps"]],
             instance_timeout_s=d.get("instance_timeout_s"),
+            correlation=list(d.get("correlation", [])),
+            max_concurrent_instances=int(d.get("max_concurrent_instances", 8)),
+            correlation_timeout_s=d.get("correlation_timeout_s"),
         )
         wf.validate()
         return wf

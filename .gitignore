@@ -133,6 +133,9 @@ dmypy.json
 # Model files (large, regenerate with fetch_model.py)
 # perception model weights: build artefacts, fetched by tools/fetch_model.py
 perception/models/*.onnx
+# pose checkpoints, converted by tools/export_rtmpose.py -- 13 MB of weights
+# is not source, and the export is reproducible from the published .pth
+perception/models/*.pth
 
 # Video/media files
 *.mp4

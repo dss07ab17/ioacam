@@ -98,9 +98,43 @@ class WorkflowInstance:
     # later event carries no identity of its own.
     trigger_zone: Optional[str] = None
 
+    # Which event attribute distinguishes this instance from its siblings, and
+    # the value it was opened with. None for singleton workflows.
+    correlation_attr: Optional[str] = None
+    correlation_value: Optional[str] = None
+
+    # Last time any event was correlated to this instance. Used to detect that
+    # the subject has been lost rather than that they stopped working.
+    last_event_us: int = 0
+
+    # Set when the instance was closed because correlation was lost. Such an
+    # instance must NOT report its remaining steps as violations: the cause is
+    # a tracking or sensor failure on our side, not a deviation by the actor.
+    correlation_lost: bool = False
+
+    @property
+    def correlation_key(self) -> Optional[str]:
+        if self.correlation_attr is None:
+            return None
+        return f"{self.correlation_attr}={self.correlation_value}"
+
+    def zones(self) -> set[str]:
+        """Every zone this instance could legitimately receive events from.
+
+        Used as the fallback when an event carries no correlation value of its
+        own -- a PLC reporting a torque cycle has no track_id, but it does have
+        a zone.
+        """
+        z = self.workflow.zones()
+        if self.trigger_zone:
+            z = z | {self.trigger_zone}
+        return z
+
     def __post_init__(self) -> None:
         if not self.runs:
             self.runs = {s.step_id: StepRun(step=s) for s in self.workflow.steps}
+        if not self.last_event_us:
+            self.last_event_us = self.started_at_us
         self.refresh_eligibility(self.started_at_us)
 
     def refresh_eligibility(self, now_us: int) -> list[StepRun]:
@@ -134,6 +168,20 @@ class WorkflowInstance:
         if self.workflow.instance_timeout_s is None:
             return None
         return self.started_at_us + int(self.workflow.instance_timeout_s * US_PER_S)
+
+    def oldest_open_eligible_us(self) -> int:
+        """When the earliest still-open step became eligible.
+
+        Tie-break for zone-fallback correlation: when an uncorrelatable event
+        could belong to two instances at the same station, the one that has
+        been waiting longest for it is the better guess.
+        """
+        times = [
+            r.eligible_at_us
+            for r in self.runs.values()
+            if r.is_open() and r.eligible_at_us is not None
+        ]
+        return min(times) if times else self.started_at_us
 
     def unmet_predecessors(self, run: StepRun) -> list[str]:
         """Predecessors of `run` that have not completed successfully.

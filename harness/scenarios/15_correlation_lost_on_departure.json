@@ -1,0 +1,97 @@
+{
+  "name": "15_correlation_lost_on_departure",
+  "description": "Subject leaves mid-workflow. Unresolved steps are unknown, never a violation.",
+  "final_tick_s": 200,
+  "flush": true,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 2.5,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_helmet",
+      "value": true,
+      "confidence": 0.88,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 3,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_glasses",
+      "value": true,
+      "confidence": 0.82,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 10,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_left_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "unknown",
+      "instance_id": "wf-assembly-station-4#1",
+      "route": "review_queue",
+      "detail_contains": "correlation lost"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "violation"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

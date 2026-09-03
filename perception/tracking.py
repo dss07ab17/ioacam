@@ -120,3 +120,54 @@ class IouTracker:
         engine never sees a person who entered and never left.
         """
         return [t for t in self.tracks if t.misses > 0]
+
+
+class MultiClassTracker:
+    """One IoU tracker per object class, so classes cannot steal each other's ids.
+
+    Objects need tracking for the same reason people do, and for one more: a
+    detector that sees a phone in 3 frames out of 10 would otherwise emit three
+    `object_at_station` events for one phone, and the engine has no way to know
+    it was the same phone. A track turns a flicker into one identity that can
+    be required to persist before anything is emitted.
+
+    Per class rather than one tracker over everything, because association is
+    by IoU alone. A phone lying on a laptop overlaps it almost completely; a
+    single tracker would hand the phone's id to the laptop on the frame the
+    phone disappears, and the event stream would show a phone becoming a
+    laptop. Keeping a tracker per class makes that unrepresentable.
+
+    Object tracks are shorter-lived than people by default. A person occluded
+    for a second is still there; a phone that stops being detected has usually
+    been put away, and holding its id open invites the next phone-shaped thing
+    to inherit it.
+    """
+
+    def __init__(self, iou_threshold: float = 0.30, max_misses: int = 5,
+                 history_window: int = 30) -> None:
+        self.iou_threshold = iou_threshold
+        self.max_misses = max_misses
+        self.history_window = history_window
+        self.trackers: dict[str, IouTracker] = {}
+
+    def update(self, detections: Sequence[Detection]) -> list[Track]:
+        by_class: dict[str, list[Detection]] = {}
+        for det in detections:
+            by_class.setdefault(det.label, []).append(det)
+
+        # Every class that has ever been seen is updated, including the ones
+        # absent this frame: a tracker that is not told about the empty frame
+        # never ages its tracks out, and a stale box would sit there forever.
+        for label in by_class:
+            if label not in self.trackers:
+                self.trackers[label] = IouTracker(
+                    iou_threshold=self.iou_threshold,
+                    max_misses=self.max_misses,
+                    prefix=f"obj-{label.replace(' ', '_')}",
+                    history_window=self.history_window,
+                )
+
+        matched: list[Track] = []
+        for label, tracker in self.trackers.items():
+            matched.extend(tracker.update(by_class.get(label, [])))
+        return matched

@@ -75,6 +75,79 @@ raw 0.898, softened to 0.770 by temperature scaling at T=1.8, then discounted to
 That it lands near the 0.6 in the schema's own worked example is a reasonable
 sign the calibration is in a sane range.
 
+## Objects, and whose hand they are in
+
+YOLOX has always been COCO-80; this layer used to discard 79 of the classes and
+keep `person`. The enabled list is now config, because a different site wants a
+different list:
+
+```json
+"classes": ["person", "cell phone", "laptop", "bottle", "cup",
+            "backpack", "handbag", "book", "scissors", "knife"],
+"class_thresholds": {"person": 0.35, "cell phone": 0.50, "knife": 0.60}
+```
+
+Only COCO names are accepted, and an unknown one is rejected at construction
+rather than silently detecting nothing — the model knows 80 things and a torque
+wrench is not one of them.
+
+**It is nearly free.** One forward pass produces all 80 class scores whatever
+you filter to. Measured on this laptop: 1 class 132.7 ms, 10 classes 123.0 ms —
+the difference is noise, and post-processing is ~15 ms either way against a
+~120 ms forward pass. The classes were always being computed and thrown away.
+
+**Thresholds are per class** because one number cannot serve a person filling
+the frame at 0.95 and a phone forty pixels across at 0.50. `knife` and
+`scissors` sit highest deliberately: COCO confuses them with pens, cutlery and
+phone edges, and a false knife is the most expensive false positive in the list.
+
+**Objects get their own tracks**, one tracker per class, so a phone lying on a
+laptop cannot inherit the laptop's id when it drops out for a frame. Without
+tracks a phone seen in 3 frames of 10 emits three events for one phone and the
+engine cannot tell it is the same phone. Track persistence reaches the event's
+confidence, so a two-frame flicker is visibly weaker than a steady observation.
+
+**Association is the inference**, and it lives in `association.py` alone rather
+than spread through a loop. An object is held by a person if one of that
+person's wrist keypoints falls inside the object's box, grown by a margin;
+nearest wrist wins. A wrist, not a box overlap — a phone on a desk sits inside
+its owner's bounding box whenever they lean over it. A margin, because the hand
+occludes what it holds and the wrist lands just outside. And a wrist below the
+score threshold cannot claim anything: an occluded wrist's position is a
+prediction, and attributing a knife to a prediction is precisely the confident
+wrong answer this system is built to avoid.
+
+An object nobody is holding emits **with no `track_id`**, not dropped. A knife
+on a bench with no one near it is a real observation, and often the more
+interesting one; dropping it would make "no object" and "unattributed object"
+the same stream.
+
+```json
+{"observation":"object_at_station","value":"cell phone","track_id":"trk-0001",
+ "confidence":0.6071,"subject":{"class":"object"}}
+{"observation":"object_at_station","value":"cup","confidence":0.5411,
+ "subject":{"class":"object"}}
+```
+
+Both shapes are validated against `schema/event.schema.json` in
+`test_objects.py`, using the repo's own validator.
+
+**Not wired to the engine yet, on purpose.** `perceive.py` does not emit these.
+The events are built by the real `EventEmitter` inside
+`preview_pose.py --objects` and written to the demo's JSONL log, so the false
+positive rate can be counted before anything acts on them:
+
+```bash
+python3 perception/tools/preview_pose.py --objects --log
+```
+
+Two honest gaps. The `confidence` on these events is the raw detector score
+times track persistence — **not** the calibrated composition `confidence.py`
+builds for people, because quality is computed against person box height and no
+temperature has ever been fitted for objects. And association is monocular with
+no depth: two people shoulder to shoulder will sometimes attribute to the wrong
+one. It is evidence, not proof.
+
 ## Layout
 
 ```

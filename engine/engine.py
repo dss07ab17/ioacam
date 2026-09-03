@@ -46,6 +46,11 @@ class WorkflowEngine:
         # Zones already reported as uncovered, so the finding fires on the
         # transition rather than on every subsequent event.
         self._degraded_zones: set[str] = set()
+        # Workflows currently at their concurrent-instance cap, so the warning
+        # fires on the transition rather than on every further trigger.
+        self._at_capacity: set[str] = set()
+        # (workflow, zone) pairs already reported as ambiguous for correlation.
+        self._ambiguous: set[tuple] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -65,6 +70,9 @@ class WorkflowEngine:
 
         if event.observation == "person_count" and event.zone_id:
             self.occupancy[event.zone_id] = int(event.value or 0)
+
+        if event.observation == "person_left_zone" and event.track_id:
+            findings += self._lose_correlation_for_track(event)
 
         consumed = False
 
@@ -126,6 +134,19 @@ class WorkflowEngine:
             for inst in list(self.instances):
                 if inst.closed:
                     continue
+                # Checked before step deadlines: if we have lost the subject,
+                # their pending steps must not fire as violations.
+                ct = inst.workflow.correlation_timeout_s
+                if ct is not None and not inst.workflow.singleton:
+                    silent_since = inst.last_event_us + int(ct * US_PER_S)
+                    if now_us >= silent_since and not inst.all_settled():
+                        findings += self._close_correlation_lost(
+                            inst,
+                            silent_since,
+                            f"no correlated event for {ct}s",
+                        )
+                        progressed = True
+                        continue
                 due = sorted(
                     (
                         (run.deadline_us(), run)
@@ -200,6 +221,50 @@ class WorkflowEngine:
                     )
                 )
 
+        if event.observation == "identity_unverified":
+            # Someone is present whom the site cannot account for. This is the
+            # case a door-only product cannot see at all: it knows who opened
+            # the door and not how many people walked through.
+            findings.append(
+                self._make_finding(
+                    event.timestamp_us,
+                    Verdict.VIOLATION,
+                    severity=_zone_severity(zone),
+                    deviation=Deviation.WRONG_ZONE,
+                    # The failed match is itself certain -- the comparison ran
+                    # and nothing cleared the bar. What is uncertain is who
+                    # this person is, which is precisely the finding.
+                    confidence=event.confidence,
+                    zone_id=zone.zone_id,
+                    subject=event.subject,
+                    detail=(
+                        f"unaccounted presence in {zone.zone_id}: {event.value}"
+                    ),
+                    triggering_event_id=event.event_id,
+                )
+            )
+
+        if event.observation == "presence_unbadged":
+            # A known person in a zone they never authenticated into. Either
+            # they entered without badging or the zone's reader missed them.
+            # Both are worth knowing; neither is an unaccounted presence.
+            findings.append(
+                self._make_finding(
+                    event.timestamp_us,
+                    Verdict.VIOLATION,
+                    severity=_zone_severity(zone),
+                    deviation=Deviation.WRONG_ZONE,
+                    confidence=event.confidence,
+                    zone_id=zone.zone_id,
+                    subject=event.subject,
+                    detail=(
+                        f"{event.subject.identity or event.value} is in "
+                        f"{zone.zone_id} without a badge-in for this zone"
+                    ),
+                    triggering_event_id=event.event_id,
+                )
+            )
+
         if (
             event.observation == "person_count"
             and zone.max_occupancy is not None
@@ -257,6 +322,19 @@ class WorkflowEngine:
                         triggering_event_id=event.event_id,
                     )
                 )
+                # Any instance depending on this zone can no longer be
+                # observed. Failing its steps on deadline would report
+                # violations that the blindness caused, not the actor.
+                for inst in list(self.instances):
+                    if inst.closed or inst.all_settled():
+                        continue
+                    if zone.zone_id in inst.zones():
+                        findings += self._close_correlation_lost(
+                            inst,
+                            event.timestamp_us,
+                            f"zone {zone.zone_id} lost sensor coverage",
+                            event.event_id,
+                        )
             elif covered and zone.zone_id in self._degraded_zones:
                 self._degraded_zones.discard(zone.zone_id)
         return findings
@@ -271,38 +349,197 @@ class WorkflowEngine:
         for wf in self.policy.workflows:
             if not wf.trigger.matches(event):
                 continue
-            if any(
-                i.workflow.workflow_id == wf.workflow_id and not i.closed
-                for i in self.instances
-            ):
-                # One instance per workflow at a time. Concurrent instances
-                # need a correlation key (track_id or asset_id); deliberately
-                # out of scope until the single-instance case is proven.
-                triggered = True
+            triggered = True
+
+            attr, value = _correlation_of(event, wf.correlation)
+
+            if wf.singleton:
+                # One instance at a time. Still correct for workflows that
+                # genuinely cannot overlap, and remains the default.
+                if any(
+                    i.workflow.workflow_id == wf.workflow_id and not i.closed
+                    for i in self.instances
+                ):
+                    continue
+            elif attr is None:
+                # The workflow wants instances told apart, but the triggering
+                # event carries none of the declared keys. Opening an
+                # uncorrelated instance would silently absorb events belonging
+                # to every other actor, so refuse and say so.
+                findings.append(
+                    self._make_finding(
+                        event.timestamp_us,
+                        Verdict.UNKNOWN,
+                        severity=Severity.WARNING,
+                        confidence=1.0,
+                        zone_id=event.zone_id,
+                        subject=event.subject,
+                        route_override=Route.MAINTENANCE,
+                        detail=(
+                            f"{wf.workflow_id}: trigger event carries none of the "
+                            f"declared correlation attributes {wf.correlation}; "
+                            f"instance not opened"
+                        ),
+                        triggering_event_id=event.event_id,
+                    )
+                )
                 continue
+            else:
+                key = f"{attr}={value}"
+                if any(
+                    i.workflow.workflow_id == wf.workflow_id
+                    and not i.closed
+                    and i.correlation_key == key
+                    for i in self.instances
+                ):
+                    # This actor already has an instance running. A second
+                    # trigger from the same actor is not a new instance.
+                    continue
+
+            open_count = sum(
+                1
+                for i in self.instances
+                if i.workflow.workflow_id == wf.workflow_id and not i.closed
+            )
+            if not wf.singleton and open_count >= wf.max_concurrent_instances:
+                # Hitting the cap is itself diagnostic. In a correctly
+                # configured site it means the tracker is churning ids, which
+                # is a perception problem, not a workflow deviation.
+                if wf.workflow_id not in self._at_capacity:
+                    self._at_capacity.add(wf.workflow_id)
+                    findings.append(
+                        self._make_finding(
+                            event.timestamp_us,
+                            Verdict.UNKNOWN,
+                            severity=Severity.WARNING,
+                            confidence=1.0,
+                            zone_id=event.zone_id,
+                            route_override=Route.MAINTENANCE,
+                            detail=(
+                                f"{wf.workflow_id}: at capacity "
+                                f"({wf.max_concurrent_instances} concurrent "
+                                f"instances); further triggers ignored. Usually "
+                                f"means tracker id churn rather than real load."
+                            ),
+                            triggering_event_id=event.event_id,
+                        )
+                    )
+                continue
+
             inst = WorkflowInstance(
                 instance_id=f"{wf.workflow_id}#{next(self._ids)}",
                 workflow=wf,
                 started_at_us=event.timestamp_us,
                 trigger_zone=event.zone_id,
+                correlation_attr=attr if not wf.singleton else None,
+                correlation_value=value if not wf.singleton else None,
+                last_event_us=event.timestamp_us,
             )
             self.instances.append(inst)
-            triggered = True
             # The triggering event may itself be evidence for the first step.
             step_findings, _ = self._apply_to_instance(inst, event)
             findings += step_findings
         return findings, triggered
 
     def _apply_to_instances(self, event: Event) -> tuple[list[Finding], bool]:
+        """Route the event to the instances it belongs to.
+
+        Key matches win outright. Zone fallback exists because certain event
+        sources carry no per-actor identity at all -- a PLC reporting a torque
+        cycle knows the station, not the operator -- and refusing to correlate
+        those would leave every bus-evidenced step permanently unprovable.
+        """
         findings: list[Finding] = []
         matched = False
-        for inst in list(self.instances):
+
+        by_key: list[WorkflowInstance] = []
+        by_zone: list[WorkflowInstance] = []
+        for inst in self.instances:
             if inst.closed:
                 continue
+            how = self._instance_match(inst, event)
+            if how == "key":
+                by_key.append(inst)
+            elif how == "zone":
+                by_zone.append(inst)
+
+        if by_key:
+            targets = by_key
+        elif by_zone:
+            # Prefer the instance that has been waiting longest for evidence.
+            # Deterministic, and the better guess: the station that started
+            # first is the one whose cycle should finish first.
+            targets = [min(by_zone, key=lambda i: i.oldest_open_eligible_us())]
+            if len(by_zone) > 1:
+                findings += self._note_ambiguity(event, by_zone, targets[0])
+        else:
+            targets = []
+
+        for inst in targets:
             f, m = self._apply_to_instance(inst, event)
             findings += f
+            if m:
+                inst.last_event_us = max(inst.last_event_us, event.timestamp_us)
             matched = matched or m
+
         return findings, matched
+
+    def _instance_match(
+        self, inst: WorkflowInstance, event: Event
+    ) -> Optional[str]:
+        """How, if at all, this event belongs to this instance."""
+        if inst.workflow.singleton:
+            return "key"
+
+        if inst.correlation_attr is not None:
+            value = _attr_of(event, inst.correlation_attr)
+            if value is not None:
+                # The event carries this instance's key attribute, so it is
+                # decisive either way: a mismatch means it belongs to a sibling.
+                return "key" if value == inst.correlation_value else None
+
+        # No correlation value on the event. Fall back to geography.
+        if event.zone_id and event.zone_id in inst.zones():
+            return "zone"
+        return None
+
+    def _note_ambiguity(
+        self,
+        event: Event,
+        candidates: list[WorkflowInstance],
+        chosen: WorkflowInstance,
+    ) -> list[Finding]:
+        """Report, once per workflow and zone, that events cannot be attributed.
+
+        Emitted once rather than per event: a station with two concurrent
+        instances and a shared PLC will produce this on every bus message, and
+        the operator needs to know the configuration is ambiguous, not to be
+        buried in it. The usual fix is for the perception layer to attach a
+        correlation attribute to bus events, or to key the workflow on zone.
+        """
+        wf_id = candidates[0].workflow.workflow_id
+        tag = (wf_id, event.zone_id)
+        if tag in self._ambiguous:
+            return []
+        self._ambiguous.add(tag)
+        return [
+            self._make_finding(
+                event.timestamp_us,
+                Verdict.UNKNOWN,
+                severity=Severity.WARNING,
+                confidence=1.0,
+                zone_id=event.zone_id,
+                route_override=Route.MAINTENANCE,
+                detail=(
+                    f"{wf_id}: '{event.observation}' in {event.zone_id} could belong "
+                    f"to {len(candidates)} concurrent instances and carries no "
+                    f"correlation attribute; assigned to {chosen.instance_id} "
+                    f"(longest waiting). Attribution is a guess until bus events "
+                    f"carry a correlation key."
+                ),
+                triggering_event_id=event.event_id,
+            )
+        ]
 
     def _apply_to_instance(
         self, inst: WorkflowInstance, event: Event
@@ -516,6 +753,74 @@ class WorkflowEngine:
             inst, run, at_us, verdict, deviation, confidence, Subject(), detail, None
         )
 
+    def _lose_correlation_for_track(self, event: Event) -> list[Finding]:
+        """The subject an instance was following has left. Close, do not accuse.
+
+        A departed or lost subject is not a worker who skipped a step. If the
+        remaining steps were failed normally, a tracker limitation would be
+        reported as a critical violation against a named person -- a false
+        accusation with a technical cause, and the fastest way to lose a
+        customer's trust in the system.
+        """
+        findings: list[Finding] = []
+        for inst in list(self.instances):
+            if inst.closed or inst.workflow.singleton:
+                continue
+            # Match on whatever key this instance actually uses, not just
+            # track_id: an instance keyed on an enrolled identity must close
+            # on departure too. Zone fallback deliberately does not count --
+            # one person leaving must not close everyone else's instance.
+            if self._instance_match(inst, event) != "key":
+                continue
+            if inst.all_settled():
+                continue
+            findings += self._close_correlation_lost(
+                inst,
+                event.timestamp_us,
+                f"subject {event.track_id} left {event.zone_id}",
+                event.event_id,
+            )
+        return findings
+
+    def _close_correlation_lost(
+        self,
+        inst: WorkflowInstance,
+        at_us: int,
+        reason: str,
+        event_id: Optional[str] = None,
+    ) -> list[Finding]:
+        """Close an instance whose subject we can no longer follow.
+
+        One finding for the instance, not one per unfinished step, and UNKNOWN
+        rather than VIOLATION. The distinction that matters operationally: the
+        actor is present but not progressing (violation) versus we have lost
+        the actor (unknown, and someone should look at why).
+        """
+        unfinished = [r.step_id for r in inst.runs.values() if not r.is_settled()]
+        for run in inst.runs.values():
+            if not run.is_settled():
+                run.state = StepState.FAILED
+        inst.correlation_lost = True
+        inst.closed = True
+        return [
+            self._make_finding(
+                at_us,
+                Verdict.UNKNOWN,
+                severity=Severity.WARNING,
+                confidence=1.0,
+                zone_id=inst.trigger_zone,
+                workflow_id=inst.workflow.workflow_id,
+                instance_id=inst.instance_id,
+                route_override=Route.REVIEW_QUEUE,
+                detail=(
+                    f"correlation lost ({reason}); {len(unfinished)} step(s) "
+                    f"{unfinished} unresolved. Not reported as deviations: the "
+                    f"subject was not observed to the end."
+                ),
+                triggering_event_id=event_id,
+            )
+        ]
+
     def _maybe_close(self, inst: WorkflowInstance, now_us: int) -> list[Finding]:
         if inst.closed:
             return []
@@ -644,6 +949,35 @@ class WorkflowEngine:
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+
+def _attr_of(event: Event, attr: str) -> Optional[str]:
+    """Read a correlation attribute off an event, or None if absent."""
+    if attr == "track_id":
+        return event.track_id
+    if attr == "subject.identity":
+        return event.subject.identity
+    if attr == "subject.asset_id":
+        return event.subject.asset_id
+    if attr == "zone_id":
+        return event.zone_id
+    return None
+
+
+def _correlation_of(
+    event: Event, attrs: list[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """First declared attribute the event actually carries.
+
+    Ordered rather than best-match, so the policy author controls precedence:
+    an enrolled identity is a better instance key than a tracker id, because it
+    survives the subject leaving the frame and coming back.
+    """
+    for attr in attrs:
+        value = _attr_of(event, attr)
+        if value is not None:
+            return attr, value
+    return None, None
 
 
 def _judge_duration(

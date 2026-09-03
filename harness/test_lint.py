@@ -183,6 +183,31 @@ catches(
 )
 
 
+catches(
+    "human workflow with no correlation in a shared zone",
+    "singleton-in-shared-zone",
+    lambda d: d["workflows"][0].pop("correlation"),
+)
+
+catches(
+    "unrecognised correlation attribute",
+    "unknown-correlation-attr",
+    lambda d: d["workflows"][0].__setitem__("correlation", ["subject.mood"]),
+)
+
+catches(
+    "instance cap below the zone's occupancy",
+    "capacity-below-occupancy",
+    lambda d: d["workflows"][0].__setitem__("max_concurrent_instances", 1),
+)
+
+catches(
+    "track_id used as the primary correlation key",
+    "correlation-on-track-id",
+    lambda d: d["workflows"][0].__setitem__("correlation", ["track_id"]),
+)
+
+
 # The cross-attestation exemption: a vision step that exists precisely to
 # corroborate a telemetry claim must NOT be flagged as action-only.
 found = {i.code for i in lint(copy.deepcopy(BASE), "base")}

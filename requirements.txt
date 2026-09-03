@@ -8,6 +8,17 @@ numpy>=1.24.0
 # Note: Already included in perception setup via fetch_model.py
 # onnxruntime>=1.16.0  # Uncomment if using ONNX-based detectors
 
+# Recommended for the RTMPose pose backend (perception/actions/rtmpose.py).
+# Not required -- it falls back to the cv2.dnn already needed for capture, at
+# about 4x the cost and one person per session call.
+# onnxruntime>=1.16.0
+
+# Export only, never on the inference path or the device: converting the
+# published RTMPose .pth to ONNX once, offline, with
+# perception/tools/export_rtmpose.py. MMPose is deliberately not needed.
+# torch>=2.0.0
+# onnx>=1.14.0
+
 # Testing
 pytest>=7.4.0
 pytest-timeout>=2.2.0

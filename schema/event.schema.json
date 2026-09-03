@@ -12,27 +12,22 @@
     "confidence"
   ],
   "additionalProperties": false,
-
   "properties": {
-
     "event_id": {
       "type": "string",
       "description": "Unique id for this event. UUIDv4 or a monotonic per-source counter. Used for de-duplication and for referencing the event from a log entry or SOC alert.",
       "minLength": 1
     },
-
     "timestamp_us": {
       "type": "integer",
       "description": "Monotonic device clock in microseconds since boot. Monotonic, NOT wall clock, so that NTP corrections cannot reorder or duplicate events. Wall clock is recorded separately at log-write time.",
       "minimum": 0
     },
-
     "wall_time": {
       "type": "string",
       "format": "date-time",
       "description": "Optional UTC wall-clock time, for human-readable logs and SOC correlation only. Never used for sequencing or timer logic."
     },
-
     "source": {
       "type": "string",
       "description": "Which subsystem produced this event. Determines whether the event carries genuine uncertainty. Camera and radar events are inferred and carry confidence < 1.0. Bus, access_control and timer events are read or computed facts and carry confidence = 1.0.",
@@ -47,24 +42,23 @@
         "engine"
       ]
     },
-
     "sensor_id": {
       "type": "string",
       "description": "Which physical sensor instance produced this event, e.g. 'cam-01', 'radar-01', 'plc-line3'. Required for camera and radar sources so that per-sensor calibration and per-camera false-alarm rates can be measured."
     },
-
     "track_id": {
       "type": "string",
       "description": "Tracker-assigned id, stable for as long as one subject remains continuously tracked by one sensor. Used to accumulate persistence and to associate a sequence of observations with one actor. Absent for events with no tracked subject, e.g. environment readings."
     },
-
     "observation": {
       "type": "string",
-      "description": "What was observed. This is a CLOSED list, deliberately. Adding an entry means committing to a detector for it, a feasibility assessment, and an ATP test. Do not extend it casually; anything outside this list is what the 'unknown' verdict exists for.",
+      "description": "What was observed. This is a CLOSED list, deliberately. Adding an entry means committing to a detector for it, a feasibility assessment, and an ATP test. Do not extend it casually; anything outside this list is what the 'unknown' verdict exists for. Note the three identity observations are distinct on purpose: 'person_identified' is an attribution (we believe this track is that person, with a match confidence), 'presence_unbadged' says a known person is somewhere they never authenticated into, and 'identity_unverified' says someone is present whom the site cannot account for at all. The second and third are security findings in their own right and must not be inferable merely from the absence of the first.",
       "enum": [
         "person_present",
         "person_count",
         "person_identified",
+        "identity_unverified",
+        "presence_unbadged",
         "person_in_zone",
         "person_left_zone",
         "ppe_helmet",
@@ -83,7 +77,6 @@
         "sensor_health"
       ]
     },
-
     "subject": {
       "type": "object",
       "description": "Who or what the observation is about. Populate as much as is known; unknown fields are omitted rather than guessed. A subject with no identity but a known role (from a badge-in in the same zone) is still fully usable by role-based rules.",
@@ -91,7 +84,14 @@
       "properties": {
         "class": {
           "type": "string",
-          "enum": ["human", "machine", "robot", "nature", "object", "unknown"],
+          "enum": [
+            "human",
+            "machine",
+            "robot",
+            "nature",
+            "object",
+            "unknown"
+          ],
           "description": "Actor class. Drives which branch of the policy applies. 'nature' events are routed to the safety path, not the SOC security path."
         },
         "identity": {
@@ -108,34 +108,37 @@
         }
       }
     },
-
     "zone_id": {
       "type": "string",
       "description": "Site zone in which the observation occurred, e.g. 'zone-assembly-4', 'zone-robot-cell-3'. Zones are declared in the site configuration. Most policy rules key on this."
     },
-
     "value": {
       "description": "The observed value. Its type depends on the observation: boolean for presence and PPE, integer for counts, string for states and recognised actions, number for environment levels.",
       "anyOf": [
-        { "type": "boolean" },
-        { "type": "integer" },
-        { "type": "number" },
-        { "type": "string" }
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        }
       ]
     },
-
     "unit": {
       "type": "string",
       "description": "Unit for numeric values, e.g. 'metres', 'celsius', 'm_per_s'. Required whenever value is a number so that thresholds are unambiguous."
     },
-
     "confidence": {
       "type": "number",
       "description": "Calibrated confidence that this observation is correct, after quality discounting, persistence and sensor agreement. Exactly 1.0 for events derived from a bus read, an access control transaction, or a timer, because those carry no perception uncertainty.",
       "minimum": 0.0,
       "maximum": 1.0
     },
-
     "confidence_components": {
       "type": "object",
       "description": "The factors that produced 'confidence', retained separately so that a site engineer tuning thresholds can tell a genuinely ambiguous detection apart from a good detection made under poor viewing conditions. Optional in production, mandatory during commissioning and ATP.",
@@ -178,22 +181,29 @@
         }
       }
     },
-
     "evidence_ref": {
       "type": "object",
       "description": "Pointer to the retained evidence for this event. Evidence is only persisted for events that reach an operator; conformant events keep no media. Kept as a reference rather than inline so the event stream stays small.",
       "additionalProperties": false,
       "properties": {
-        "clip_id": { "type": "string", "description": "Id of the retained clip in the encrypted rolling buffer." },
-        "clip_start_us": { "type": "integer", "description": "Monotonic start time of the retained window." },
-        "clip_end_us": { "type": "integer", "description": "Monotonic end time of the retained window." },
+        "clip_id": {
+          "type": "string",
+          "description": "Id of the retained clip in the encrypted rolling buffer."
+        },
+        "clip_start_us": {
+          "type": "integer",
+          "description": "Monotonic start time of the retained window."
+        },
+        "clip_end_us": {
+          "type": "integer",
+          "description": "Monotonic end time of the retained window."
+        },
         "skeleton_only": {
           "type": "boolean",
           "description": "True when only pose keypoints were retained rather than video. Preferred default: it satisfies most investigation needs while substantially reducing the privacy and retention burden."
         }
       }
     },
-
     "integrity": {
       "type": "object",
       "description": "Tamper-evidence fields. The engine chains events so that a deleted or altered event breaks the chain. Required for the defence and aerospace use cases and for the forensic value of the log.",
@@ -215,7 +225,6 @@
       }
     }
   },
-
   "examples": [
     {
       "event_id": "b3f1c2a0-1d4e-4a91-9c2b-77d8e1a4f001",
@@ -224,14 +233,18 @@
       "sensor_id": "cam-01",
       "track_id": "trk-0448",
       "observation": "person_in_zone",
-      "subject": { "class": "human", "identity": "EMP-4471", "role": "operator" },
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
       "zone_id": "zone-assembly-4",
       "value": true,
       "confidence": 0.6,
       "confidence_components": {
         "raw_score": 0.92,
         "calibrated_score": 0.78,
-        "quality": 0.70,
+        "quality": 0.7,
         "persistence": 1.0,
         "agreement": 1.1,
         "frames_observed": 48
@@ -243,7 +256,10 @@
       "source": "robot_bus",
       "sensor_id": "plc-line3",
       "observation": "robot_program",
-      "subject": { "class": "robot", "asset_id": "robot-cell-3" },
+      "subject": {
+        "class": "robot",
+        "asset_id": "robot-cell-3"
+      },
       "zone_id": "zone-robot-cell-3",
       "value": "PROG_07",
       "confidence": 1.0

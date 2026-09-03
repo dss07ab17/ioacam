@@ -1,0 +1,190 @@
+{
+  "policy_id": "pol-plant-a-transfer",
+  "version": "0.1.0",
+  "site_id": "plant-a",
+  "mode": "shadow",
+
+  "calibration": {
+    "fitted_at": "2026-09-15T09:00:00Z",
+    "temperature": 1.8,
+    "expected_calibration_error": 0.041
+  },
+
+  "zones": [
+    {
+      "zone_id": "zone-transfer-bay",
+      "name": "Transfer bay (where the operator stands)",
+      "criticality": "restricted",
+      "allowed_roles": ["operator", "supervisor"],
+      "max_occupancy": 2,
+      "covered_by": ["cam-03"]
+    },
+    {
+      "zone_id": "zone-spot-a",
+      "name": "Spot A (source position)",
+      "_comment": "A spot is just a small zone polygon. Nothing in the engine treats it differently from a room; the only thing that matters is that the camera can see it and the polygon is drawn tightly enough that presence there is unambiguous.",
+      "criticality": "restricted",
+      "covered_by": ["cam-03"]
+    },
+    {
+      "zone_id": "zone-spot-b",
+      "name": "Spot B (destination position)",
+      "criticality": "restricted",
+      "covered_by": ["cam-03"]
+    }
+  ],
+
+  "workflows": [
+    {
+      "workflow_id": "wf-pick-and-place",
+      "name": "Pick object from spot A, place at spot B",
+      "actor_class": "human",
+
+      "_comment_correlation": "Keyed on the person. Object events carry no identity, so they fall back to zone matching, which works because both spots belong to this workflow. Note what NOT to do: keying on zone_id would break this workflow, because an event in zone-transfer-bay would then be decisively rejected by an instance keyed to zone-spot-a. Zone keys only suit single-zone workflows.",
+      "correlation": ["subject.identity", "track_id"],
+      "max_concurrent_instances": 2,
+
+      "trigger": {
+        "observation": "object_at_station",
+        "zone_id": "zone-spot-a",
+        "value": true
+      },
+      "instance_timeout_s": 300,
+
+      "steps": [
+        {
+          "step_id": "t1",
+          "name": "Operator present at the transfer bay",
+          "predecessors": [],
+          "actor_role": "operator",
+          "zone_id": "zone-transfer-bay",
+          "evidence": [
+            { "observation": "person_in_zone", "value": true, "min_confidence": 0.6 }
+          ],
+          "max_duration_s": 60,
+          "overrun_tolerance_s": 30,
+          "_comment": "The object arriving at spot A starts the clock, but nobody may be there yet. This step is really 'someone came to do the job', so the deadline is generous.",
+          "deviation_severity": {
+            "skipped": "warning",
+            "wrong_role": "critical",
+            "overrun": "informational"
+          }
+        },
+        {
+          "step_id": "t2",
+          "name": "Object lifted from spot A",
+          "predecessors": ["t1"],
+          "actor_role": "operator",
+          "zone_id": "zone-spot-a",
+          "evidence": [
+            { "observation": "object_removed", "value": true, "min_confidence": 0.7 }
+          ],
+          "min_duration_s": 1,
+          "max_duration_s": 120,
+          "underrun_tolerance_s": 0.5,
+          "overrun_tolerance_s": 30,
+          "deviation_severity": {
+            "skipped": "warning",
+            "out_of_order": "warning",
+            "overrun": "informational"
+          }
+        },
+        {
+          "step_id": "t3",
+          "name": "Object placed at spot B",
+          "predecessors": ["t2"],
+          "actor_role": "operator",
+          "zone_id": "zone-spot-b",
+          "evidence": [
+            { "observation": "object_at_station", "value": true, "min_confidence": 0.7 }
+          ],
+          "min_duration_s": 2,
+          "max_duration_s": 30,
+          "underrun_tolerance_s": 1,
+          "overrun_tolerance_s": 15,
+          "_comment": "This is the step the whole workflow exists for. An object lifted from A and never arriving at B is the interesting failure: misplacement, diversion, or the operator walking off mid-task. Nothing observable happens when it goes wrong, so the deadline is the detection.",
+          "deviation_severity": {
+            "skipped": "critical",
+            "out_of_order": "warning",
+            "underrun": "warning",
+            "overrun": "warning"
+          }
+        }
+      ]
+    }
+  ],
+
+  "response_matrix": [
+    {
+      "verdict": "violation",
+      "severity": "safety_relevant",
+      "response": "alarm_escalate_and_request_mitigation",
+      "retain_evidence": true,
+      "route": "safety_emergency"
+    },
+    {
+      "verdict": "violation",
+      "severity": "critical",
+      "min_confidence": 0.85,
+      "response": "alarm_escalate_and_request_mitigation",
+      "retain_evidence": true,
+      "route": "soc_security"
+    },
+    {
+      "verdict": "violation",
+      "severity": "critical",
+      "min_confidence": 0.5,
+      "max_confidence": 0.85,
+      "response": "log_and_notify_operator",
+      "retain_evidence": true,
+      "route": "soc_security"
+    },
+    {
+      "verdict": "violation",
+      "severity": "critical",
+      "max_confidence": 0.5,
+      "response": "log_and_queue_review",
+      "retain_evidence": true,
+      "route": "review_queue"
+    },
+    {
+      "verdict": "violation",
+      "severity": "warning",
+      "min_confidence": 0.85,
+      "response": "log_notify_soc",
+      "retain_evidence": true,
+      "route": "soc_security"
+    },
+    {
+      "verdict": "violation",
+      "severity": "warning",
+      "max_confidence": 0.85,
+      "response": "log_only",
+      "route": "review_queue"
+    },
+    {
+      "verdict": "violation",
+      "severity": "informational",
+      "response": "log_only",
+      "route": "review_queue"
+    },
+    {
+      "verdict": "unknown",
+      "severity": "any",
+      "response": "log_and_queue_review",
+      "retain_evidence": true,
+      "route": "review_queue"
+    },
+    {
+      "verdict": "tolerated",
+      "severity": "any",
+      "response": "log_only",
+      "route": "review_queue"
+    },
+    {
+      "verdict": "conformant",
+      "severity": "any",
+      "response": "none"
+    }
+  ]
+}

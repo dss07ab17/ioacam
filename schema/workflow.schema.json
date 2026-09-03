@@ -140,6 +140,29 @@
             "description": "Wall time after which an unfinished instance is closed and reported as incomplete. Prevents orphaned instances accumulating when an actor simply walks away."
           },
 
+          "correlation": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "enum": ["track_id", "subject.identity", "subject.asset_id", "zone_id"]
+            },
+            "description": "Ordered list of event attributes that decide which concurrent instance an event belongs to. Empty means singleton: one instance at a time, correct only for workflows that genuinely cannot overlap. Order matters and expresses precedence: prefer subject.identity over track_id where enrolment exists, because a tracker id swaps when subjects cross and is reissued when someone leaves and returns, whereas an enrolled identity survives both. Events carrying none of these attributes (a PLC reporting a torque cycle knows the station, not the operator) fall back to zone matching, and where that is ambiguous the engine assigns to the longest-waiting instance and reports the ambiguity once."
+          },
+
+          "max_concurrent_instances": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 8,
+            "description": "Cap on simultaneously open instances. Instances are created from observed events, so a tracker churning ids would otherwise spawn them without bound. Set it at or above the zone's max_occupancy, or normal operation will hit the cap. Reaching it is diagnostic in its own right: it usually indicates tracker id churn rather than real load, so the finding routes to maintenance."
+          },
+
+          "correlation_timeout_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Silence, in seconds, before an instance is closed as correlation lost rather than accruing step violations. Deliberately absent by default. It is only safe when the perception layer emits periodic liveness for active tracks; without that, a legitimately long step is indistinguishable from a lost subject and enabling this manufactures false closures. Correlation loss is also detected from explicit signals -- a person_left_zone event for the instance's key, or the zone losing all sensor coverage -- and those need no timeout."
+          },
+
           "steps": {
             "type": "array",
             "minItems": 1,

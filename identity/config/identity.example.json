@@ -1,0 +1,25 @@
+{
+  "_comment": "Per-site identity configuration. The ROC table MUST be measured on this site's own enrolment data and cameras: a curve from the vendor's benchmark does not describe your lighting, your mounting angles or your population.",
+
+  "sensor_id": "cam-01",
+
+  "roster": {
+    "presence_ttl_s": 43200,
+    "has_exit_readers": false,
+    "_comment": "TTL must exceed the longest plausible shift. Too short and people vanish from the roster mid-shift, then read as unaccounted presences. With exit readers, set this longer still and rely on badge-out."
+  },
+
+  "threshold_policy": {
+    "target_false_match_rate": 0.0001,
+    "min_margin": 0.05,
+    "floor": 0.35,
+    "_comment": "target is per DECISION, not per comparison. Per-comparison requirement is derived as target/N. Run ThresholdPolicy.max_candidates() at commissioning: beyond that many candidates, tier 2 cannot decide at all.",
+    "roc": [
+      {"threshold": 0.40, "false_match_rate": 0.01},
+      {"threshold": 0.55, "false_match_rate": 0.001},
+      {"threshold": 0.70, "false_match_rate": 0.0001},
+      {"threshold": 0.82, "false_match_rate": 0.00001},
+      {"threshold": 0.90, "false_match_rate": 0.000001}
+    ]
+  }
+}

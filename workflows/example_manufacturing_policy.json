@@ -211,7 +211,12 @@
           },
           "overrun_tolerance_s": 15
         }
-      ]
+      ],
+      "correlation": [
+        "subject.identity",
+        "track_id"
+      ],
+      "max_concurrent_instances": 3
     },
     {
       "workflow_id": "wf-robot-cell-3-attestation",
@@ -262,7 +267,11 @@
           },
           "overrun_tolerance_s": 5
         }
-      ]
+      ],
+      "correlation": [
+        "subject.asset_id"
+      ],
+      "max_concurrent_instances": 2
     }
   ],
   "response_matrix": [

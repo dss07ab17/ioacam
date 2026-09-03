@@ -1,0 +1,37 @@
+{
+  "name": "19_known_person_unbadged_zone",
+  "description": "Identified, but in a zone they never authenticated into. Identification succeeded; that is the finding.",
+  "final_tick_s": 10,
+  "events": [
+    {
+      "t_s": 1,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "presence_unbadged",
+      "value": "EMP-9012",
+      "confidence": 0.93,
+      "zone_id": "zone-assembly-4",
+      "track_id": "trk-U",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-9012",
+        "role": "maintenance_engineer"
+      }
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "zone_id": "zone-assembly-4",
+      "deviation": "wrong_zone",
+      "severity": "warning",
+      "detail_contains": "without a badge-in"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "unknown"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

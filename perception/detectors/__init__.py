@@ -19,6 +19,11 @@ def build_detector(cfg: dict) -> Detector:
             score_threshold=cfg.get("score_threshold", 0.30),
             nms_threshold=cfg.get("nms_threshold", 0.45),
             p6=cfg.get("p6", False),
+            # Person alone unless the site asks for more. Objects are opt-in
+            # because every extra class is another stream of detections whose
+            # false-positive rate nobody has measured yet.
+            classes=cfg.get("classes", ("person",)),
+            class_thresholds=cfg.get("class_thresholds"),
         )
 
     if backend == "ultralytics":

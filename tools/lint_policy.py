@@ -55,6 +55,13 @@ VALID_DEVIATIONS = {
 
 VALID_SEVERITIES = {"informational", "warning", "critical", "safety_relevant"}
 
+VALID_CORRELATION_ATTRS = {
+    "track_id",
+    "subject.identity",
+    "subject.asset_id",
+    "zone_id",
+}
+
 
 @dataclass
 class Issue:
@@ -180,6 +187,73 @@ def lint(policy: dict, name: str = "") -> list[Issue]:
         wid = wf["workflow_id"]
         steps = wf.get("steps", [])
         step_ids = [s["step_id"] for s in steps]
+
+        # --- concurrency configuration --------------------------------
+        corr = wf.get("correlation", [])
+        cap = wf.get("max_concurrent_instances", 8)
+
+        for attr in corr:
+            if attr not in VALID_CORRELATION_ATTRS:
+                add(
+                    ERROR,
+                    "unknown-correlation-attr",
+                    f"{name}:{wid}",
+                    f"correlation attribute '{attr}' is not recognised",
+                    f"valid attributes are {sorted(VALID_CORRELATION_ATTRS)}",
+                )
+
+        wf_zones = {s.get("zone_id") for s in steps if s.get("zone_id")}
+        crowded = [
+            z
+            for z in wf_zones
+            if z in zones and (zones[z].get("max_occupancy") or 1) > 1
+        ]
+        if not corr and wf.get("actor_class") == "human" and crowded:
+            add(
+                WARN,
+                "singleton-in-shared-zone",
+                f"{name}:{wid}",
+                f"no correlation declared, but {crowded} allow more than one person",
+                "a second actor starting the same workflow will be folded into "
+                "the first instance, so their steps interleave and produce "
+                "deviations that nobody actually committed",
+            )
+
+        if corr:
+            worst = max(
+                (zones[z].get("max_occupancy") or 1) for z in crowded
+            ) if crowded else 1
+            if cap < worst:
+                add(
+                    WARN,
+                    "capacity-below-occupancy",
+                    f"{name}:{wid}",
+                    f"max_concurrent_instances ({cap}) is below the zone's "
+                    f"max_occupancy ({worst})",
+                    "a legitimately full zone will hit the cap and further "
+                    "triggers will be dropped during normal operation",
+                )
+            if "track_id" in corr and corr.index("track_id") == 0:
+                add(
+                    INFO,
+                    "correlation-on-track-id",
+                    f"{name}:{wid}",
+                    "track_id is the primary correlation key",
+                    "tracker ids swap when subjects cross and are reissued when "
+                    "someone leaves and returns; prefer subject.identity first "
+                    "where enrolment exists, with track_id as the fallback",
+                )
+
+        if wf.get("correlation_timeout_s") is not None:
+            add(
+                INFO,
+                "correlation-timeout-set",
+                f"{name}:{wid}",
+                f"correlation_timeout_s is {wf['correlation_timeout_s']}",
+                "only safe when the perception layer emits periodic liveness "
+                "for active tracks; otherwise a legitimately long step is "
+                "indistinguishable from a lost subject",
+            )
 
         if not any(not s.get("predecessors") for s in steps):
             add(

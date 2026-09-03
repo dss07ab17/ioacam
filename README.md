@@ -3,30 +3,18 @@
 Judges observation events against a declared workflow policy. No cameras, no
 models, no hardware. Pure logic, stdlib only, Python 3.10+.
 
-## Quick Start
-
-**First time setup?** See [INSTALLATION.md](INSTALLATION.md) for complete setup instructions including:
-- Python environment setup
-- Perception layer configuration (YOLOX model download, zone definition)
-- Running tests and the full workflow
-
-**Already set up?** Run the test suite:
-
 ```bash
-python3 harness/runner.py          # 12 scenarios
+python3 harness/runner.py          # 19 scenarios
 python3 harness/runner.py -v       # with every finding printed
 python3 harness/test_engine.py     # property tests
 python3 harness/test_lint.py       # linter tests
+python3 identity/test_identity.py  # identity cascade tests
 python3 tools/lint_policy.py workflows/*.json --strict
+python3 perception/actions/test_actions.py
+cd perception && python3 test_perception.py
 ```
 
 All suites pass; the example policy lints clean.
-
-**Extending the system?** See [DEVELOPMENT.md](DEVELOPMENT.md) for:
-- How to add new observation types
-- Building custom detectors
-- Creating test scenarios
-- Policy development workflow
 
 ## Layout
 
@@ -40,33 +28,20 @@ harness/
   runner.py         scenario runner
   test_engine.py    property tests
   test_lint.py      linter tests
-  scenarios/        12 JSON scenarios
+  scenarios/        19 JSON scenarios
 tools/
-  lint_policy.py    catches what schema validation cannot
+  lint_policy.py       catches what schema validation cannot
+  inspect_checkpoint.py  read a .pth's input contract without torch
+perception/
+  perceive.py       camera -> events (see perception/README.md)
+  detectors/        pluggable model backend; default YOLOX, Apache-2.0
+  actions/          per-person action recognition (scaffolding built, models not)
+identity/
+  roster.py         who is where, from access control transactions
+  matcher.py        face matcher seam + threshold policy
+  resolver.py       the tiered cascade
 schema/         the perception <-> engine contract
 workflows/      the declared policy (example: plant A, line 3)
-perception/     separate process: webcam -> YOLOX -> zones -> events
-```
-
-## Event Format
-
-Perception emits JSON lines (newline-delimited JSON) to stdout, one event per line:
-
-```json
-{"event_id":"2c61435b-32cc-40ce-8abb-56f76ec4b13b","timestamp_us":976786338561,"wall_time":"2026-08-31T18:08:52.114Z","source":"camera","sensor_id":"cam-01","observation":"person_in_zone","confidence":0.7257,"track_id":"trk-0001","zone_id":"zone-assembly-4","value":true,"subject":{"class":"human"},"confidence_components":{"raw_score":0.9067,"calibrated_score":0.7796,"quality":0.9309,"persistence":1.0,"agreement":1.0,"frames_observed":4}}
-```
-
-Each event contains:
-- **Observation type** — `person_in_zone`, `person_left_zone`, `person_count`, `sensor_health`
-- **Confidence** — 0.0–1.0, composed of raw score, calibration, quality, persistence, agreement
-- **Identifiers** — `event_id`, `track_id`, `zone_id`, `sensor_id`
-- **Timestamps** — microseconds since epoch + ISO 8601 wall clock
-
-All events conform to [schema/event.schema.json](schema/event.schema.json).
-
-To save events to a file:
-```bash
-python perception/perceive.py --config perception/config/webcam.json > events.jsonl
 ```
 
 ## The three quantities
@@ -103,6 +78,74 @@ perception uncertainty in a fact, and the engine treats them accordingly.
 | 10 low confidence | Same violation as 06, routed to a human |
 | 11 robot attestation | Controller claims running, motion never corroborates |
 | 12 coverage lost | Blind zone reports unknown, never conformant |
+| 13 two concurrent operators | Each actor gets an instance; neither disturbs the other |
+| 14 concurrent one deviates | Only the deviating actor is reported |
+| 15 correlation lost on departure | Subject leaves; unresolved steps are unknown, not violations |
+| 16 correlation lost on coverage loss | Blindness is never reported as skipped steps |
+| 17 instance capacity | Cap reached routes to maintenance, not to the SOC |
+| 18 unaccounted presence | Nobody the site can account for is a violation |
+| 19 unbadged zone | Known person, zone they never authenticated into |
+
+## Concurrency
+
+A workflow declares `correlation`: an ordered list of event attributes that
+decide which instance an event belongs to. Empty means singleton, which is the
+original behaviour and still correct for workflows that cannot overlap.
+
+**Order expresses precedence, and it matters.** `subject.identity` before
+`track_id`, because a tracker id swaps when two people cross and is reissued
+when someone leaves and returns; an enrolled identity survives both.
+
+**Zone fallback exists because some sources have no per-actor identity.** A PLC
+reporting a torque cycle knows the station, not the operator. Refusing to
+correlate those would leave every bus-evidenced step permanently unprovable, so
+events lacking a correlation attribute fall back to zone matching. Where two
+instances share a zone this is a guess: the engine assigns to the
+longest-waiting instance and reports the ambiguity once per workflow and zone,
+rather than on every message. The fix is for bus events to carry a correlation
+key, or for the workflow to be keyed on zone.
+
+**Losing the subject is not a violation.** This is the important one. If a
+tracker drops someone mid-workflow and the engine failed their remaining steps
+normally, a tracking limitation would be reported as a critical violation
+against a named person -- a false accusation with a technical cause, and the
+fastest way to lose a customer's trust. So correlation loss closes the instance
+with a single `unknown` finding routed to review, and the unresolved steps are
+named rather than judged.
+
+Three things trigger it: a `person_left_zone` event matching the instance's
+key, the zone losing all sensor coverage, or optionally `correlation_timeout_s`
+of silence. That last one is off by default, because it is only safe when
+perception emits periodic liveness for active tracks; without that, a
+legitimately long step is indistinguishable from a lost subject.
+
+**Hitting `max_concurrent_instances` is diagnostic.** Instances are created
+from observed events, so a churning tracker would spawn them without bound. The
+cap makes that visible instead of silent, and the finding routes to maintenance
+because it is a perception problem, not a workflow deviation.
+
+## Identity
+
+Camera tracks are bound to enrolled identities using what the doors already
+know, rather than by re-identifying faces at monitoring range. See
+`identity/README.md`. Three things from it are worth knowing here:
+
+**Thresholds are derived from candidate count, not chosen.** Comparing against
+N candidates multiplies the false match rate by roughly N, so the policy
+declares an acceptable rate per decision and derives the per-comparison
+threshold as `target / N`.
+
+**That produces a hard ceiling.** Beyond `target / strongest_measured_FMR`
+candidates, no operating point is strict enough and whole-site matching stops
+working entirely. `ThresholdPolicy.max_candidates()` computes it, and it must
+be known at commissioning. This is why the presence TTL and badge-out matter:
+they keep the roster small enough to remain decidable.
+
+**Authentication and attribution are different facts.** The door verified a
+person who presented themselves; the camera believes a track is that person.
+The second carries a match confidence so downstream rules can refuse to act on
+a weak one, and the log has to show which link was inferred. If a badge is
+lent, everything downstream is wrong.
 
 ## Design decisions worth preserving
 
@@ -184,11 +227,6 @@ not flagged.
 
 ## Not built yet, deliberately
 
-**Concurrent instances.** One instance per workflow at a time. Multiple
-concurrent runs need a correlation key (`track_id`, `asset_id`) and a policy
-on what happens when two actors interleave. Out of scope until the single
-case is proven at a site.
-
 **Log integrity.** The `integrity` block in `event.schema.json` is specified
 but not implemented. Hash chain, monotonic counter, TPM-keyed signature.
 
@@ -197,99 +235,33 @@ into `conformant`. Sign the file, anchor its version in the TPM, stamp
 `policy_version` on every finding -- the last of those the engine already does.
 
 **Calibration.** `calibration.temperature` is loaded and carried but not
-applied by the engine; confidence arrives pre-calibrated. That decision is now
-made: the correction lives in `perception/confidence.py`. The two values must
-be kept equal, or the engine compares confidences against thresholds tuned on a
-different scale. Nothing enforces that yet.
+applied; confidence arrives pre-calibrated from perception. Where that
+correction lives is a perception-layer decision.
 
 ## Next
 
-The target perception pipeline:
+**Transport.** Findings are produced and go nowhere. MQTT out, per the software
+architecture. Until this exists the engine is a library, not a running system.
 
-```
-GStreamer -> YOLOX -> ByteTrack -> RTMPose -> ST-GCN -> events -> this engine
-```
+**Bus inputs.** Robot and machine telemetry over OPC-UA, Modbus or CAN. The
+easiest work on the list and the highest value per hour: those events arrive at
+confidence 1.0 and they carry the cross-attestation capability nothing in the
+market study offers. The robot workflow in the example policy currently has no
+real source feeding it.
 
-`perception/` is the first stage of that, running now: OpenCV capture, YOLOX person
-detection, a greedy IoU tracker, zone polygons, and calibrated events on
-stdout. It is a separate process and imports nothing from `engine/`, so the
-board port swaps it and leaves the engine untouched. Four of the nineteen
-observations are covered; PPE, pose and action need RTMPose and ST-GCN.
+**Log integrity.** Hash chain, monotonic counter, TPM signing. The `integrity`
+block in `event.schema.json` is specified and unimplemented.
 
-**The detector's licence is a product decision, not a technical one.**
-Ultralytics YOLO is AGPL-3.0, which would oblige releasing the engine, the
-policies and the site integrations as AGPL. The default is YOLOX (Apache-2.0),
-and the backend is a config string so the choice stays reversible. Reasoning,
-alternatives and the traps next door: `perception/LICENCE-NOTES.md`.
+**The board.** Confirm YOLOX and RTMPose export to ONNX and convert through
+RKNN-Toolkit2 on real hardware, then measure what NPU headroom remains once
+face recognition runs alongside. That answer decides one board or two, and it
+belongs in the proposal. A model that will not convert costs nothing to
+discover in week one and everything in month four.
 
-Before adopting any model, confirm it exports to ONNX and converts through
-RKNN-Toolkit2 on the actual board. A model that will not convert costs nothing
-to discover in week one and everything in month four. Still unverified for
-YOLOX here.
+## Known issue
 
-Building the perception layer also found a defect in the contract itself:
-`value` used `oneOf` over `boolean / integer / number / string`, and since every
-JSON integer is also a number, every integer matched two branches and failed
-validation. `person_count` could never validate. The scenarios only ever used
-booleans and strings, so nothing had hit it. Now `anyOf`.
-
-## Documentation
-
-| Document | Purpose |
-|---|---|
-| [INSTALLATION.md](INSTALLATION.md) | Environment setup, dependency installation, perception layer configuration |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Extending the system, adding detectors, test scenarios, debugging |
-| [schema/](schema/) | Event and workflow schema documentation |
-| [perception/README.md](perception/README.md) | Perception layer architecture and zone configuration |
-| [perception/LICENCE-NOTES.md](perception/LICENCE-NOTES.md) | Model licensing and alternatives (YOLOX, YOLO, etc.) |
-
-## Repository Structure
-
-```
-.
-├── README.md                      # This file
-├── INSTALLATION.md                # Setup and configuration
-├── DEVELOPMENT.md                 # Development guide
-├── requirements.txt               # Python dependencies
-├── .gitignore                     # Git ignore patterns
-│
-├── engine/                        # Workflow validation engine
-│   ├── engine.py                 # Main engine: ingest, tick, flush
-│   ├── instance.py               # Step lifecycle state machine
-│   ├── model.py                  # Data models: Event, Finding
-│   └── policy.py                 # Policy loading and validation
-│
-├── perception/                    # Camera detection layer
-│   ├── perceive.py               # Main entry point
-│   ├── tracking.py               # Person tracking
-│   ├── zones.py                  # Zone membership
-│   ├── confidence.py             # Confidence calibration
-│   ├── detectors/                # Pluggable detector backends
-│   ├── models/                   # Pre-trained model weights
-│   ├── config/                   # Configuration files
-│   └── tools/                    # Utilities (model download, zone definition)
-│
-├── harness/                       # Test suite
-│   ├── runner.py                 # Scenario runner
-│   ├── test_engine.py            # Property-based tests
-│   ├── test_lint.py              # Linter tests
-│   └── scenarios/                # 12 test scenarios (JSON)
-│
-├── schema/                        # JSON contracts
-│   ├── event.schema.json         # Perception event format
-│   └── workflow.schema.json      # Policy declaration format
-│
-├── tools/                         # Utilities
-│   ├── lint_policy.py            # Policy validator
-│   ├── fetch_model.py            # Download YOLOX model
-│   ├── define_zone.py            # Interactive zone tool
-│   └── validate_events.py        # Event validation
-│
-└── workflows/                     # Policy files
-    └── example_manufacturing_policy.json
-```
-
-## License
-
-YOLOX weights and code are Apache-2.0 (see [perception/LICENCE-NOTES.md](perception/LICENCE-NOTES.md) for rationale and alternatives).
-
+`perception/perceive.py` writes events to stdout. Redirecting that with `>` in
+PowerShell produces UTF-16, which no JSON Lines reader will accept. Either pipe
+through `Set-Content -Encoding utf8`, or add an `--output` flag so the process
+opens the file itself with `encoding="utf-8"` and the shell is never involved.
+The second is better, and matters more on the board rather than less.
