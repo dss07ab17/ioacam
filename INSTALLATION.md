@@ -5,6 +5,12 @@
 - **Python 3.10 or higher**
 - **pip** package manager
 
+On Windows, `python` is the usual interpreter name. The examples below use
+`python3` as in the rest of the repo; substitute `python` if that is what
+your venv provides. PowerShell does not expand `workflows/*.json` the way
+bash does — pass each policy file explicitly, or run the commands from Git
+Bash / WSL.
+
 ## Quick Start
 
 ### 1. Clone and Set Up Environment
@@ -38,7 +44,16 @@ The perception layer requires downloading a pre-trained model and configuring zo
 python perception/tools/fetch_model.py
 ```
 
-This downloads `perception/models/yolox_tiny.onnx` (or `yolox_s.onnx` for higher accuracy).
+This downloads `perception/models/yolox_tiny.onnx` (the argparse default).
+For the larger accuracy-reference weights:
+
+```bash
+python perception/tools/fetch_model.py --model yolox_s
+```
+
+Then point `detector.model_path` at `perception/models/yolox_s.onnx` in your
+config. `onnxruntime` is not required for YOLOX: the default backend uses
+OpenCV DNN.
 
 #### Define Your Zones
 
@@ -78,17 +93,22 @@ python perception/perceive.py --max-frames 300 | python perception/tools/validat
 #### Run the Harness (Test Scenarios)
 
 ```bash
-# Run all 12 scenarios
+# Run all 19 scenarios
 python3 harness/runner.py
 
 # Run with verbose output (all findings printed)
 python3 harness/runner.py -v
 ```
 
+The runner treats an extra argument as a **directory** of JSON files, not a
+single scenario path. To exercise one file, put it in a folder of its own
+or call `run_scenario("harness/scenarios/01_clean_run.json")` from Python
+(it takes a path, not a loaded dict).
+
 #### Run Property Tests
 
 ```bash
-# Property-based tests for tick invariance
+# Property-based tests for tick invariance across every scenario file
 python3 harness/test_engine.py
 ```
 
@@ -102,22 +122,47 @@ python3 harness/test_lint.py
 #### Lint Policy Files
 
 ```bash
-# Check your workflow policy for correctness
+# Check workflow policies for correctness (bash / Git Bash)
 python3 tools/lint_policy.py workflows/*.json --strict
+
+# Same check with explicit paths (PowerShell)
+python tools/lint_policy.py workflows/example_manufacturing_policy.json workflows/pick_and_place_policy.json --strict
 ```
+
+#### Identity, perception, and action tests
+
+These need no camera and no downloaded weights except where noted:
+
+```bash
+python3 identity/test_identity.py
+python3 perception/test_perception.py
+python3 perception/test_objects.py
+python3 perception/actions/test_actions.py
+python3 perception/actions/test_rtmpose.py
+python3 perception/actions/test_posec3d.py
+```
+
+Pose/action **live** preview is optional. Uncomment `onnxruntime` in
+`requirements.txt` (or rely on the slower `cv2.dnn` fallback), export
+weights once with `perception/tools/export_rtmpose.py` and
+`perception/tools/export_posec3d.py` (those need `torch`, also commented
+in `requirements.txt`), then see `perception/actions/README.md`.
 
 ### 4. Full Workflow Integration
 
-To run the complete pipeline (perception → engine):
+The engine is a **library**. It has no stdin consumer yet: findings are
+produced in-process (the harness feeds JSON scenario files) and go nowhere
+until a transport exists. Perception emits JSON lines on stdout for a
+consumer you write:
 
 ```bash
-# Terminal 1: Run perception layer
-python perception/perceive.py
-
-# Terminal 2: Run your consumer/engine
-# (This is where you integrate with your workflow logic)
-python perception/perceive.py | python your_consumer.py
+python perception/perceive.py --config perception/config/webcam.json
+python perception/perceive.py --config perception/config/webcam.json | python perception/tools/validate_events.py
 ```
+
+On PowerShell, do not redirect stdout with `>`. That writes UTF-16, which
+JSON Lines readers reject. Pipe to another process, or write the file from
+Python with UTF-8. See the known issue in [README.md](README.md).
 
 ## Configuration
 
@@ -129,7 +174,8 @@ python perception/perceive.py | python your_consumer.py
 
 ### Workflow Policy
 
-- **Example policy:** `workflows/example_manufacturing_policy.json`
+- **Example policy:** `workflows/example_manufacturing_policy.json` (assembly station + robot cross-check; what the harness scenarios load)
+- **Second example:** `workflows/pick_and_place_policy.json` (transfer-bay / pick-and-place)
 - **Schema reference:** `schema/workflow.schema.json`
 
 Edit the policy file to:
@@ -177,7 +223,8 @@ python3 harness/runner.py
 Ensure:
 - Zone configuration is valid (run `perception/tools/define_zone.py`)
 - Camera is running and detecting people
-- Confidence thresholds in zones.json are appropriate (typically 0.6-0.7)
+- Confidence thresholds in the zone config (`emission.min_confidence`, typically much lower than the policy's decision thresholds) are appropriate
+- The zone polygon reaches `y = 1.0` if subjects are clipped by the bottom of the frame (see `perception/config/README.md`)
 
 ## Licence Notes
 
@@ -191,3 +238,4 @@ For details on why and licensing alternatives, see [perception/LICENCE-NOTES.md]
 - See [DEVELOPMENT.md](DEVELOPMENT.md) for development workflow
 - Review `schema/` for data contract details
 - Study `workflows/example_manufacturing_policy.json` as a template
+- Optional pose/action path: [perception/actions/README.md](perception/actions/README.md)

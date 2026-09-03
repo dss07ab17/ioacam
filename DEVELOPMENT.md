@@ -8,56 +8,77 @@ engine/              Workflow validation logic (no external dependencies, stdlib
   instance.py       Step lifecycle state machine
   model.py          Enums, Event, Finding data classes
   policy.py         Policy loading and validation
-  
+
 perception/         Camera detection layer (separate process)
   perceive.py       Main perception entry point
   tracking.py       Person tracking across frames
+  association.py    Wrist-in-box object-to-person attribution
   zones.py          Zone membership checking
   confidence.py     Confidence score calibration
   emit.py           Event emission
   detectors/        Pluggable detector implementations
-    base.py         Base detector interface
-    ultralytics_yolo.py
-    yolox_onnx.py
-  
+    base.py         Detection + Detector protocol
+    yolox_onnx.py   Apache-2.0 default (cv2.dnn)
+    ultralytics_yolo.py  AGPL-3.0, evaluation only
+    stub.py         Scripted boxes for tests
+  actions/          Pose tubes, RTMPose, PoseC3D (see actions/README.md)
+  tools/            fetch_model.py, define_zone.py, validate_events.py,
+                    preview_pose.py, export_rtmpose.py, export_posec3d.py
+  test_perception.py
+  test_objects.py
+
+identity/           Badge roster + face-matcher seam (tests use StubMatcher)
+  roster.py matcher.py resolver.py test_identity.py
+
 harness/            Comprehensive test suite
   runner.py         Scenario test runner
   test_engine.py    Property-based tests
   test_lint.py      Policy linter tests
-  scenarios/        12 JSON test scenarios
-  
+  scenarios/        19 JSON test scenarios
+
 schema/             JSON contracts
   event.schema.json      Perception → Engine event format
   workflow.schema.json   Policy declaration format
-  
-tools/              Utilities
-  lint_policy.py    Policy validation and linting
-  define_zone.py    Interactive zone definition tool
-  fetch_model.py    Model download utility
-  validate_events.py Event validation tool
+
+workflows/          Declared policies
+  example_manufacturing_policy.json
+  pick_and_place_policy.json
+
+tools/              Policy and checkpoint utilities
+  lint_policy.py           Policy validation and linting
+  inspect_checkpoint.py    Read a .pth input contract without torch
 ```
+
+There is no `setup.py` / `pyproject.toml`. Install with
+`pip install -r requirements.txt` from the repo root. Optional packages
+(`onnxruntime`, `torch`, `onnx`) stay commented until you need pose export
+or the faster ONNX Runtime path.
 
 ## Running Tests
 
 ### Quick Test Suite
 
 ```bash
-# Run all scenarios (should see all pass)
+# Run all 19 scenarios (should see all pass)
 python3 harness/runner.py
 
 # Verbose output with detailed findings
 python3 harness/runner.py -v
 ```
 
+`harness/runner.py` takes an optional directory of `*.json` files, not a
+single scenario filename.
+
 ### Property-Based Tests
 
-Tests tick-invariance across all 12 scenarios:
+Tests tick-invariance across every file in `harness/scenarios/`:
 
 ```bash
 python3 harness/test_engine.py
 ```
 
-These verify that the engine produces consistent results regardless of when `tick()` is called.
+These verify that the engine produces consistent results regardless of when
+`tick()` is called.
 
 ### Linter Tests
 
@@ -65,14 +86,32 @@ These verify that the engine produces consistent results regardless of when `tic
 python3 harness/test_lint.py
 ```
 
+This suite exercises `tools/lint_policy.py`. It does **not** check
+perception/engine import isolation.
+
+### Other suites
+
+```bash
+python3 identity/test_identity.py
+python3 perception/test_perception.py
+python3 perception/test_objects.py
+python3 perception/actions/test_actions.py
+python3 perception/actions/test_rtmpose.py
+python3 perception/actions/test_posec3d.py
+```
+
+`perception/test_perception.py` parses every module under `perception/` and
+fails if anything imports `engine`.
+
 ### Policy Validation
 
 ```bash
 # Check a specific policy file
 python3 tools/lint_policy.py workflows/example_manufacturing_policy.json
 
-# Strict validation (fails on warnings)
+# Strict validation (fails on warnings). Bash expands the glob; PowerShell does not.
 python3 tools/lint_policy.py workflows/*.json --strict
+python tools/lint_policy.py workflows/example_manufacturing_policy.json workflows/pick_and_place_policy.json --strict
 ```
 
 ## Key Design Principles to Preserve
@@ -90,41 +129,28 @@ When extending the engine:
 
 ### Adding a New Observation Type
 
-1. Add the observation to `schema/event.schema.json`:
-   ```json
-   {
-     "type": "object",
-     "properties": {
-       "observation": {
-         "enum": ["existing_observation", "new_observation"]
-       }
-     }
-   }
-   ```
+1. Add the name to the closed `observation` enum in `schema/event.schema.json`.
 
-2. Add the enum to `engine/model.py`
+2. `Event.observation` is a string, not an engine-side enum. Handle the new
+   value in `engine/engine.py` (`ingest` / `tick`) where the rules need it.
 
-3. Add handling logic to `engine/engine.py` (ingest/tick methods)
+3. Add a test scenario to `harness/scenarios/`.
 
-4. Add test scenario to `harness/scenarios/`
-
-5. Update linter checks in `tools/lint_policy.py`
+4. Update linter checks in `tools/lint_policy.py` if the observation can appear
+   in a policy evidence list.
 
 ### Adding a New Detector
 
-1. Create a new detector class in `perception/detectors/`:
-   ```python
-   from .base import BaseDetector
-   
-   class MyDetector(BaseDetector):
-       def detect(self, frame):
-           # Return detections as (x1, y1, x2, y2, confidence)
-           pass
-   ```
+1. Implement the `Detector` protocol in `perception/detectors/` (`name`,
+   `licence`, `detect(frame) -> Sequence[Detection]`). Return `Detection`
+   objects (`x1, y1, x2, y2, score`), not raw tuples.
 
-2. Update `perception/perceive.py` to instantiate and use your detector
+2. Register the backend name in `perception/detectors/__init__.py`
+   (`BACKENDS` and `build_detector`). `perceive.py` already calls
+   `build_detector`; it should not hard-code a new class.
 
-3. Test with real frames or test data
+3. Test with the stub path or real frames. `perception/test_perception.py`
+   runs the real CLI against a synthetic video and the stub detector.
 
 ### Adding a New Test Scenario
 
@@ -138,8 +164,7 @@ When extending the engine:
 ### Tracing a Scenario
 
 ```bash
-# Add debug logging in harness/runner.py
-python3 harness/runner.py -v 2>&1 | grep "scenario_name"
+python3 harness/runner.py -v
 ```
 
 ### Inspecting Engine State
@@ -152,12 +177,16 @@ In `engine/engine.py`, the state is tracked in:
 ### Understanding Findings
 
 A Finding contains:
-- `verdict` — what happened (violation/conformant/tolerated/unknown)
-- `severity` — how serious (informational/warning/critical)
-- `confidence` — perception certainty (0.0-1.0)
-- `route` — where it should go (alarm/review/none)
+- `verdict` — `conformant` / `tolerated` / `violation` / `unknown`
+- `severity` — authored (`informational` / `warning` / `critical` / `safety_relevant`)
+- `confidence` — perception certainty (0.0–1.0)
+- `response` — what the response matrix selected (`none`, `log_only`,
+  `log_and_queue_review`, `log_and_notify_operator`, `log_notify_soc`,
+  `alarm_and_escalate_soc`, `alarm_escalate_and_request_mitigation`)
+- `route` — `soc_security` / `safety_emergency` / `maintenance` / `review_queue`
 
-The response matrix in the policy maps (verdict, severity) → action.
+The response matrix in the policy maps (verdict, severity, confidence) →
+`response` and `route`.
 
 ## Policy Development Workflow
 
@@ -165,13 +194,16 @@ The response matrix in the policy maps (verdict, severity) → action.
 2. **Create workflow policy** with steps, predecessors, evidence requirements
 3. **Lint the policy**: `python3 tools/lint_policy.py workflows/your_policy.json --strict`
 4. **Test with scenarios**: Create synthetic event sequences in `harness/scenarios/`
-5. **Validate against live data**: Pipe perception → engine consumer with your policy
+5. **Validate live emission** against `schema/event.schema.json` with
+   `perception/tools/validate_events.py`. There is no stock stdin→engine
+   consumer; the engine is a library until transport exists.
 6. **Calibrate confidence thresholds** based on real detections
 
 ## Performance Considerations
 
 ### Perception Layer
-- Runs at camera framerate (typically 30 FPS)
+- Runs at camera framerate (typically 30 FPS on paper; YOLOX-tiny on a
+  laptop CPU is closer to ~5 fps — debounce is in **frames**, not seconds)
 - Emits only edge-triggered events (~dozen per 300 frames)
 - Confidence calculation is deterministic and fast
 
@@ -188,26 +220,21 @@ The response matrix in the policy maps (verdict, severity) → action.
 ## Useful Commands
 
 ```bash
-# Install in development mode
-pip install -e .
+# Dependencies (no editable package)
+pip install -r requirements.txt
 
-# Format code
-black engine/ perception/ harness/ tools/
-
-# Type check
+# Format / typecheck / lint (listed in requirements.txt)
+black engine/ perception/ harness/ tools/ identity/
 mypy engine/ --strict
+flake8 engine/ perception/ harness/ tools/ identity/
 
-# Lint
-flake8 engine/ perception/ harness/ tools/
-
-# Run a single scenario
+# Run a single scenario by path
 python3 -c "
-import json
 from harness.runner import run_scenario
-
-with open('harness/scenarios/01_clean_run.json') as f:
-    scenario = json.load(f)
-    run_scenario(scenario, verbose=True)
+r = run_scenario('harness/scenarios/01_clean_run.json')
+print(r.name, 'PASS' if r.passed else 'FAIL')
+for f in r.findings:
+    print(f)
 "
 ```
 
@@ -221,12 +248,17 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 python3 harness/runner.py
 ```
 
+On PowerShell: `$env:PYTHONPATH = "$(Get-Location);$env:PYTHONPATH"`.
+Most of the test scripts insert the repo root themselves.
+
 ### Perception and Engine Don't Separate
 
 Both modules are intentionally independent. Check that:
-- Perception imports nothing from `engine/`
+- Perception imports nothing from `engine/` (enforced by
+  `perception/test_perception.py`)
 - Engine imports nothing from `perception/`
-- The test in `harness/test_lint.py` enforces this
+- Identity is a third package; keep the same rule unless you deliberately
+  change the contract
 
 ### Policy Won't Load
 
@@ -244,8 +276,9 @@ Common issues:
 ## Contributing
 
 When making changes:
-1. Run the full test suite: `python3 harness/runner.py`
-2. Lint your policy if you modified workflows: `python3 tools/lint_policy.py workflows/*.json --strict`
-3. Ensure separation of concerns (no cross-layer imports)
-4. Add scenarios for new observation types
-5. Update this guide if adding new development workflows
+1. Run the harness: `python3 harness/runner.py`
+2. Run the other suites you touched (identity, perception, actions)
+3. Lint policies if you modified workflows: `python3 tools/lint_policy.py workflows/*.json --strict`
+4. Ensure separation of concerns (no cross-layer imports)
+5. Add scenarios for new observation types
+6. Update this guide if adding new development workflows

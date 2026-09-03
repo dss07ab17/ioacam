@@ -11,7 +11,10 @@ python3 harness/test_lint.py       # linter tests
 python3 identity/test_identity.py  # identity cascade tests
 python3 tools/lint_policy.py workflows/*.json --strict
 python3 perception/actions/test_actions.py
-cd perception && python3 test_perception.py
+python3 perception/actions/test_rtmpose.py
+python3 perception/actions/test_posec3d.py
+python3 perception/test_perception.py
+python3 perception/test_objects.py
 ```
 
 All suites pass; the example policy lints clean.
@@ -34,14 +37,15 @@ tools/
   inspect_checkpoint.py  read a .pth's input contract without torch
 perception/
   perceive.py       camera -> events (see perception/README.md)
+  association.py    object-to-person attribution (demo path; not emitted by perceive.py)
   detectors/        pluggable model backend; default YOLOX, Apache-2.0
-  actions/          per-person action recognition (scaffolding built, models not)
+  actions/          RTMPose + PoseC3D plumbing; NTU-60 head is not site-useful yet
 identity/
   roster.py         who is where, from access control transactions
   matcher.py        face matcher seam + threshold policy
   resolver.py       the tiered cascade
 schema/         the perception <-> engine contract
-workflows/      the declared policy (example: plant A, line 3)
+workflows/      declared policies (manufacturing example + pick-and-place)
 ```
 
 ## The three quantities
@@ -161,7 +165,7 @@ flag an earlier one as repeated. See `_apply_to_instance`.
 device `tick()` runs every few hundred milliseconds and the difference is
 invisible. In a test that jumps sixty seconds it decides whether the next
 step's clock is right. `test_engine.py` locks this with a tick-invariance
-property test across all twelve scenarios.
+property test across every file in `harness/scenarios/`.
 
 **A step's confidence is the weakest link across its evidence.** Taking the
 mean would let one certain bus reading paper over a marginal visual detection.
@@ -234,9 +238,9 @@ but not implemented. Hash chain, monotonic counter, TPM-keyed signature.
 into `conformant`. Sign the file, anchor its version in the TPM, stamp
 `policy_version` on every finding -- the last of those the engine already does.
 
-**Calibration.** `calibration.temperature` is loaded and carried but not
-applied; confidence arrives pre-calibrated from perception. Where that
-correction lives is a perception-layer decision.
+**Calibration.** Temperature scaling lives in `perception/confidence.py`.
+The engine compares the resulting confidence against policy thresholds, so
+`calibration.temperature` in the camera config must match the policy file.
 
 ## Next
 
@@ -252,11 +256,13 @@ real source feeding it.
 **Log integrity.** Hash chain, monotonic counter, TPM signing. The `integrity`
 block in `event.schema.json` is specified and unimplemented.
 
-**The board.** Confirm YOLOX and RTMPose export to ONNX and convert through
-RKNN-Toolkit2 on real hardware, then measure what NPU headroom remains once
-face recognition runs alongside. That answer decides one board or two, and it
-belongs in the proposal. A model that will not convert costs nothing to
-discover in week one and everything in month four.
+**The board.** YOLOX and RTMPose already export to ONNX in this repo
+(`perception/tools/fetch_model.py`, `perception/tools/export_rtmpose.py`).
+Confirm conversion through RKNN-Toolkit2 on real hardware, then measure what
+NPU headroom remains once face recognition runs alongside. That answer
+decides one board or two, and it belongs in the proposal. A model that will
+not convert costs nothing to discover in week one and everything in month
+four.
 
 ## Known issue
 
