@@ -26,6 +26,9 @@ in `perceive.py`.
 | `quality.reference_height_px` | Subject pixel height at which viewing quality is considered full. Depends on how far the camera is from the zone; measure it once with `--preview`. |
 | `quality.min_height_px` | Below this a subject scores zero quality. |
 | `integrity.enabled` | Emit `integrity.seq` and `prev_hash`. Off by default; see the README. |
+| `objects.enabled` | Opt-in. Track non-person COCO classes; emit `object_at_station` on the production path. Implies pose. |
+| `pose.enabled` | Opt-in RTMPose (or `backend: stub` for tests). Implied by objects/actions. |
+| `actions.enabled` | Opt-in PoseC3D on `actions.every_s` cadence; emit `action_recognised` (including abstentions as `value: "unknown"`). |
 
 ## Defining the polygon
 
