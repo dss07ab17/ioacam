@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
-"""iOACAM perception layer: webcam -> person detection -> zones -> events.
+"""iOACAM perception layer: webcam -> detection -> zones -> events.
 
 A SEPARATE PROCESS from the workflow engine. It imports nothing from engine/
 and never will. The only thing that crosses between them is a stream of JSON
 lines matching schema/event.schema.json, which is what makes the board port a
 swap of this process alone.
 
+This is the **production events pipeline**. Object detection, pose and action
+recognition are opt-in stages (config or --objects / --actions); with all
+stages off the behaviour matches the people-and-zones path alone.
+
     python perception/perceive.py --config perception/config/zones.example.json
-    python perception/perceive.py --preview            # tune the polygon
+    python perception/perceive.py --preview
+    python perception/perceive.py --objects --actions
     python perception/perceive.py | python your_consumer.py
 
 stdout is events. stderr is everything else.
+
+The live demo with a preview window and JSONL logging is
+`perception/tools/preview_pose.py`. It uses the same stage modules so the
+demo and this path cannot silently diverge.
 """
 
 from __future__ import annotations
@@ -27,8 +36,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cv2  # noqa: E402
 
 import confidence as conf  # noqa: E402
+from actions_stage import ActionsStage  # noqa: E402
 from detectors import build_detector  # noqa: E402
-from emit import EventEmitter, log  # noqa: E402
+from emit import EventEmitter, log, monotonic_us  # noqa: E402
+from objects import ObjectStage  # noqa: E402
+from pose import PoseStage, person_boxes_from_tracks  # noqa: E402
 from tracking import IouTracker  # noqa: E402
 from zones import Membership, load_zones  # noqa: E402
 
@@ -51,6 +63,31 @@ DEFAULTS = {
     "quality": {"reference_height_px": 220, "min_height_px": 40},
     "integrity": {"enabled": False},
     "zones": [],
+    # Opt-in stages. Off by default so an unchanged config is byte-compatible
+    # with the people-and-zones path.
+    "objects": {
+        "enabled": False,
+        "margin": 0.25,
+        "min_wrist_score": 0.30,
+        "persistence_window": 30,
+    },
+    "pose": {
+        "enabled": False,
+        "backend": "rtmpose",
+        "model_path": "perception/models/rtmpose_t.onnx",
+        "runtime": "auto",
+        "device": "cpu",
+    },
+    "actions": {
+        "enabled": False,
+        "backend": "posec3d",
+        "model_path": "perception/models/posec3d_pose_only.onnx",
+        "every_s": 1.0,
+        "device": "cpu",
+        "classes": "ntu60",
+        "min_confidence": 0.55,
+        "min_margin": 0.15,
+    },
 }
 
 
@@ -165,9 +202,80 @@ def draw_preview(frame, zones, tracks, memberships, frame_w, frame_h):
     return frame
 
 
+def resolve_stages(cfg: dict, args) -> tuple[bool, bool, bool]:
+    """CLI overrides config. Objects/actions imply pose (wrists / tubes)."""
+    objects_on = bool(cfg.get("objects", {}).get("enabled")) or bool(
+        getattr(args, "objects", False)
+    )
+    actions_on = bool(cfg.get("actions", {}).get("enabled")) or bool(
+        getattr(args, "actions", False)
+    )
+    pose_on = bool(cfg.get("pose", {}).get("enabled")) or objects_on or actions_on
+    return objects_on, pose_on, actions_on
+
+
 def run(cfg: dict, args) -> int:
+    objects_on, pose_on, actions_on = resolve_stages(cfg, args)
+
+    # Person-only when objects are off: keeps post-NMS cost down and stops
+    # phones inheriting person track ids. Forward-pass cost is unchanged.
+    detector_cfg = dict(cfg["detector"])
+    if not objects_on:
+        detector_cfg["classes"] = ["person"]
+
+    em = cfg["emission"]
+    qcfg = cfg["quality"]
+    temperature = float(cfg["calibration"]["temperature"])
+
+    # Build optional stages before opening the camera (and before zone load)
+    # so a missing model fails immediately with the export command.
+    pose_stage = None
+    if pose_on:
+        pose_stage = PoseStage(cfg.get("pose") or {})
+        log("[perception] pose={}".format(pose_stage.name))
+
+    object_stage = None
+    if objects_on:
+        configured = list(
+            cfg["detector"].get("classes")
+            or detector_cfg.get("classes")
+            or []
+        )
+        object_classes = [c for c in configured if c != "person"]
+        if not object_classes:
+            if detector_cfg.get("backend") == "stub":
+                object_classes = ["cell phone"]
+            else:
+                raise ValueError(
+                    "objects enabled but detector.classes has no object classes. "
+                    "Add COCO names alongside 'person' in the config."
+                )
+        ocfg = cfg.get("objects") or {}
+        object_stage = ObjectStage(
+            object_classes=object_classes,
+            margin=float(ocfg.get("margin", 0.25)),
+            min_wrist_score=float(ocfg.get("min_wrist_score", 0.30)),
+            persistence_window=int(
+                ocfg.get("persistence_window", em["persistence_window"])
+            ),
+            mode="edge",
+        )
+        log("[perception] objects={}".format(", ".join(object_stage.object_classes)))
+
+    actions_stage = None
+    if actions_on:
+        acfg = dict(cfg.get("actions") or {})
+        if getattr(args, "action_every", None) is not None:
+            acfg["every_s"] = args.action_every
+        actions_stage = ActionsStage(acfg)
+        log(
+            "[perception] actions={} every {:.1f}s".format(
+                actions_stage.name, actions_stage.every_s
+            )
+        )
+
     zones = load_zones(cfg["zones"])
-    detector = build_detector(cfg["detector"])
+    detector = build_detector(detector_cfg)
     tracker = IouTracker(
         iou_threshold=cfg["tracking"]["iou_threshold"],
         max_misses=cfg["tracking"]["max_misses"],
@@ -175,10 +283,6 @@ def run(cfg: dict, args) -> int:
     emitter = EventEmitter(
         sensor_id=cfg["sensor_id"], integrity=cfg["integrity"].get("enabled", False)
     )
-
-    em = cfg["emission"]
-    qcfg = cfg["quality"]
-    temperature = float(cfg["calibration"]["temperature"])
 
     if args.preview:
         check_preview_available()
@@ -250,9 +354,14 @@ def run(cfg: dict, args) -> int:
             frames += 1
             frame_h, frame_w = frame.shape[:2]
             blur_score, luminance_score = conf.blur_and_luminance(frame)
+            now_us = monotonic_us()
 
             detections = detector.detect(frame)
-            tracks = tracker.update(detections)
+            person_dets = [d for d in detections if d.label == "person"]
+            object_dets = [d for d in detections if d.label != "person"]
+            # Zone / occupancy logic must only see people. An object box must
+            # never mint a person track_id.
+            tracks = tracker.update(person_dets)
             live_ids = set(t.track_id for t in tracks)
 
             for track in tracks:
@@ -267,7 +376,7 @@ def run(cfg: dict, args) -> int:
                         continue
 
                     value, components = person_confidence(
-                        track, detections, blur_score, luminance_score, frame_w, frame_h
+                        track, person_dets, blur_score, luminance_score, frame_w, frame_h
                     )
                     membership.last_confidence = value
 
@@ -348,7 +457,7 @@ def run(cfg: dict, args) -> int:
                     if occupants:
                         occupancy_conf = min(
                             person_confidence(
-                                t, detections, blur_score, luminance_score, frame_w, frame_h
+                                t, person_dets, blur_score, luminance_score, frame_w, frame_h
                             )[0]
                             for t in occupants
                         )
@@ -364,6 +473,26 @@ def run(cfg: dict, args) -> int:
                         value=observed,
                         unit="persons",
                     ))
+
+            poses: dict = {}
+            boxes = person_boxes_from_tracks(tracks)
+            if pose_stage is not None:
+                poses = pose_stage.estimate(frame, boxes)
+
+            if object_stage is not None:
+                _held, object_events = object_stage.process(
+                    object_dets, poses, emitter, timestamp_us=now_us
+                )
+                for event in object_events:
+                    emitter.emit(event)
+
+            if actions_stage is not None:
+                actions_stage.push(now_us, poses, boxes)
+                results = actions_stage.maybe_infer(now_us)
+                for event in actions_stage.build_events(
+                    emitter, results, timestamp_us=now_us
+                ):
+                    emitter.emit(event)
 
             if args.preview:
                 cv2.imshow(
@@ -411,6 +540,15 @@ def main() -> int:
     parser.add_argument("--preview", action="store_true",
                         help="Show the annotated frame. Use it to tune the polygon.")
     parser.add_argument("--max-frames", type=int, default=0)
+    parser.add_argument("--objects", action="store_true",
+                        help="Enable object detection and wrist attribution "
+                             "(overrides config objects.enabled)")
+    parser.add_argument("--actions", action="store_true",
+                        help="Enable PoseC3D action recognition "
+                             "(overrides config actions.enabled; implies pose)")
+    parser.add_argument("--action-every", type=float, default=None,
+                        help="Seconds between action inferences per run "
+                             "(PoseC3D is ~130-185 ms; not per-frame)")
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
