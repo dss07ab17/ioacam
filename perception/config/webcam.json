@@ -83,5 +83,37 @@
   },
   "integrity": {
     "enabled": false
+  },
+  "objects": {
+    "enabled": false,
+    "_comment": "Object detection and wrist attribution. Off by default; --objects overrides. Which classes are detected comes from detector.classes above. Enabling this turns pose on implicitly, because attribution needs wrist keypoints.",
+    "margin": 0.25,
+    "_comment_margin": "How far outside an object's box a wrist may be and still count as holding it, as a fraction of box size. Too tight and a phone held at arm's length is never attributed; too loose and a bottle on the desk is attributed to whoever walks past.",
+    "min_wrist_score": 0.3,
+    "_comment_min_wrist_score": "Attribution needs a wrist the pose model was reasonably sure about. In a webcam run where wrists averaged 0.30 with only 39% above threshold, a phone was seen 90 times and attributed 3 times -- the wrist, not the object, was the limiting factor.",
+    "persistence_window": 30
+  },
+  "pose": {
+    "enabled": false,
+    "_comment": "RTMPose keypoint estimation. Off by default; enabled implicitly by objects or actions. Needs the exported model: python perception/tools/export_rtmpose.py",
+    "backend": "rtmpose",
+    "model_path": "perception/models/rtmpose_t.onnx",
+    "runtime": "auto",
+    "_comment_runtime": "'auto' prefers onnxruntime and falls back to cv2.dnn, which is roughly 4x slower.",
+    "device": "cpu"
+  },
+  "actions": {
+    "enabled": false,
+    "_comment": "PoseC3D action recognition. Off by default; --actions overrides. Needs the exported model: python perception/tools/export_posec3d.py. NOTE: action recognition needs the WHOLE BODY in frame. Hips and knees carry most of the signal and a laptop webcam at desk distance sees neither, which shows up as near-total abstention.",
+    "backend": "posec3d",
+    "model_path": "perception/models/posec3d_pose_only.onnx",
+    "every_s": 1.0,
+    "_comment_every_s": "Seconds between inferences per track. PoseC3D costs ~130-185 ms and reads a ~2 s window, so running it per frame would re-analyse almost the same window at full price. This is a latency budget as much as a cost control: no action model can classify an action before it has happened.",
+    "device": "cpu",
+    "classes": "ntu60",
+    "_comment_classes": "'ntu60' is the stock checkpoint's vocabulary -- 'drink water', 'taking a selfie'. Nothing about workflows. Site classes mean replacing cls_head.fc_cls and fine-tuning; supply a list here once you have.",
+    "min_confidence": 0.55,
+    "min_margin": 0.15,
+    "_comment_abstention": "Both tests must pass or the result is an abstention, emitted as value 'unknown'. min_margin matters more than it looks: two classes at 0.41 and 0.39 is not a recognition, and on a real floor the confusable pairs are exactly the ones that matter."
   }
 }
