@@ -409,6 +409,227 @@ def test_flicker_is_not_traffic() -> None:
               f"got {len(crossings)}")
 
 
+def _parse_events(stdout: str) -> list[dict]:
+    events = []
+    for line in stdout.splitlines():
+        if line.strip():
+            events.append(json.loads(line))
+    return events
+
+
+def test_stages_off_are_people_and_zones_only() -> None:
+    """With objects/pose/actions disabled, stdout is the classic four observations."""
+    print("\nstages disabled (production path unchanged)")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        script = build_walk()
+        video = tmp_path / "walk.avi"
+        write_video(video, len(script) + 5)
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "sensor_id": "cam-01",
+            "detector": {"backend": "stub", "script": script},
+            "zones": [ZONE],
+            "emission": {
+                "enter_frames": 3, "exit_frames": 5, "persistence_window": 30,
+                "min_confidence": 0.02, "emit_person_count": True,
+                "count_debounce_frames": 3,
+            },
+            "objects": {"enabled": False},
+            "pose": {"enabled": False},
+            "actions": {"enabled": False},
+        }), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(PERCEPTION / "perceive.py"),
+             "--config", str(config_path), "--source", str(video)],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=180,
+        )
+        check(result.returncode == 0, "stages-off CLI exits 0", result.stderr[-500:])
+        events = _parse_events(result.stdout)
+        observations = {e["observation"] for e in events}
+        check(
+            observations <= {"person_in_zone", "person_left_zone",
+                             "person_count", "sensor_health"},
+            "no object/action observations when stages are off",
+            str(observations),
+        )
+        check("object_at_station" not in observations, "objects stay silent when disabled")
+        check("action_recognised" not in observations, "actions stay silent when disabled")
+
+
+def test_objects_attributed_and_unattributed() -> None:
+    """Objects stage emits object_at_station with and without track_id."""
+    print("\nobjects stage (attributed + unattributed)")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        # StubPoseEstimator places the right wrist near mid-box.
+        # Person box: cx=300, bottom=400, h=220 → wrist ≈ (300, 317.5).
+        person = {**box(cx=300, bottom=400.0), "label": "person"}
+        held_phone = {
+            "x1": 285.0, "y1": 300.0, "x2": 315.0, "y2": 335.0,
+            "score": 0.72, "label": "cell phone",
+        }
+        free_phone = {
+            "x1": 20.0, "y1": 20.0, "x2": 60.0, "y2": 60.0,
+            "score": 0.68, "label": "cell phone",
+        }
+        script = [[person, held_phone, free_phone] for _ in range(40)]
+        video = tmp_path / "objects.avi"
+        write_video(video, len(script) + 2)
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "sensor_id": "cam-01",
+            "detector": {
+                "backend": "stub",
+                "script": script,
+                "classes": ["person", "cell phone"],
+            },
+            "zones": [ZONE],
+            "emission": {
+                "enter_frames": 3, "exit_frames": 5, "persistence_window": 30,
+                "min_confidence": 0.02, "emit_person_count": False,
+                "count_debounce_frames": 3,
+            },
+            "objects": {"enabled": True, "margin": 0.25, "min_wrist_score": 0.30},
+            "pose": {"enabled": True, "backend": "stub", "score": 0.9},
+            "actions": {"enabled": False},
+        }), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(PERCEPTION / "perceive.py"),
+             "--config", str(config_path), "--source", str(video)],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=180,
+        )
+        check(result.returncode == 0, "objects CLI exits 0", result.stderr[-800:])
+        events = _parse_events(result.stdout)
+        objects = [e for e in events if e["observation"] == "object_at_station"]
+        check(len(objects) >= 2, "at least two object_at_station events",
+              f"got {len(objects)}: {objects!r}")
+
+        attributed = [e for e in objects if "track_id" in e]
+        unattributed = [e for e in objects if "track_id" not in e]
+        check(bool(attributed), "wrist-overlapping object carries track_id",
+              str(objects))
+        check(bool(unattributed), "unheld object omits track_id rather than dropping",
+              str(objects))
+        check(all(e["value"] == "cell phone" for e in objects),
+              "value carries the object class")
+        check(all(e.get("subject") == {"class": "object"} for e in objects),
+              "subject class is object")
+
+        validation = subprocess.run(
+            [sys.executable, str(PERCEPTION / "tools" / "validate_events.py")],
+            input=result.stdout, capture_output=True, text=True,
+            cwd=str(REPO_ROOT), timeout=120,
+        )
+        check(validation.returncode == 0,
+              "object events validate against schema/event.schema.json",
+              validation.stderr[-1500:])
+
+
+def test_actions_missing_model_fails_loud() -> None:
+    """Enabled actions with a missing ONNX must exit, not run silently."""
+    print("\nactions missing model (fail loud)")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        missing = tmp_path / "no-such-posec3d.onnx"
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "sensor_id": "cam-01",
+            "detector": {"backend": "stub", "script": [[]]},
+            "zones": [],
+            "actions": {
+                "enabled": True,
+                "backend": "posec3d",
+                "model_path": str(missing),
+            },
+            "pose": {"enabled": True, "backend": "stub"},
+        }), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(PERCEPTION / "perceive.py"),
+             "--config", str(config_path), "--source", str(tmp_path / "no.avi")],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=60,
+        )
+        check(result.returncode != 0, "missing action model exits non-zero",
+              result.stderr[-500:])
+        err = result.stderr + result.stdout
+        check("export_posec3d" in err or "PoseC3D" in err,
+              "error names the export command",
+              err[-800:])
+        check("object_at_station" not in result.stdout,
+              "no events stream when the stage failed to start")
+
+
+def test_pose_missing_model_fails_loud() -> None:
+    print("\npose missing model (fail loud)")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        missing = tmp_path / "no-such-rtmpose.onnx"
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "sensor_id": "cam-01",
+            "detector": {"backend": "stub", "script": [[]]},
+            "zones": [],
+            "objects": {"enabled": True},
+            "pose": {
+                "enabled": True,
+                "backend": "rtmpose",
+                "model_path": str(missing),
+            },
+            "detector_classes_note": "stub",
+        }), encoding="utf-8")
+        # Force objects so pose is required; stub detector needs object classes
+        # listed so ObjectStage constructs after pose — pose must fail first.
+        cfg = json.loads(config_path.read_text())
+        cfg["detector"]["classes"] = ["person", "cell phone"]
+        config_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(PERCEPTION / "perceive.py"),
+             "--config", str(config_path), "--max-frames", "1"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=60,
+        )
+        check(result.returncode != 0, "missing pose model exits non-zero",
+              result.stderr[-500:])
+        check("export_rtmpose" in (result.stderr + result.stdout),
+              "error names export_rtmpose.py",
+              result.stderr[-800:])
+
+
+def test_action_recognised_events_validate() -> None:
+    """Decided and abstained action events both validate against the schema."""
+    print("\naction_recognised event shapes")
+    sys.path.insert(0, str(PERCEPTION))
+    sys.path.insert(0, str(PERCEPTION / "tools"))
+    sys.path.insert(0, str(PERCEPTION / "actions"))
+    from actions_stage import build_action_recognised_event  # noqa: WPS433
+    from base import ActionScore  # noqa: WPS433
+    from emit import EventEmitter  # noqa: WPS433
+    from validate_events import validate  # noqa: WPS433
+
+    schema = json.loads((REPO_ROOT / "schema" / "event.schema.json").read_text())
+    import io
+    emitter = EventEmitter(sensor_id="cam-01", stream=io.StringIO())
+
+    decided = ActionScore(
+        track_id="trk-0001", label="reaching", confidence=0.81, abstained=False
+    )
+    abstained = ActionScore(
+        track_id="trk-0001", label=None, confidence=0.22, abstained=True,
+        reason="best class below threshold",
+    )
+    for name, score in (("decided", decided), ("abstained", abstained)):
+        event = build_action_recognised_event(emitter, score)
+        errors = validate(event, schema, None)
+        check(not errors, f"{name} action_recognised validates", str(errors))
+    check(
+        build_action_recognised_event(emitter, abstained)["value"] == "unknown",
+        "abstention is emitted as value unknown, not dropped",
+    )
+
+
 def main() -> int:
     print("perception layer tests")
     test_polygon()
@@ -418,6 +639,11 @@ def main() -> int:
     test_no_engine_import()
     test_end_to_end()
     test_flicker_is_not_traffic()
+    test_stages_off_are_people_and_zones_only()
+    test_objects_attributed_and_unattributed()
+    test_actions_missing_model_fails_loud()
+    test_pose_missing_model_fails_loud()
+    test_action_recognised_events_validate()
 
     print()
     if failures:
