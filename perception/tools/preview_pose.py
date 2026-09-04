@@ -75,14 +75,13 @@ ROOT = Path(__file__).resolve().parent.parent          # perception/
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "actions"))
 
-from association import associate  # noqa: E402
-from base import AbstentionPolicy  # noqa: E402
+from actions_stage import ActionsStage  # noqa: E402
 from emit import EventEmitter, monotonic_us, wall_time_now  # noqa: E402
-from perceive import check_preview_available, open_capture  # noqa: E402
-from posec3d import NTU60_CLASSES, PoseC3DRecognizer  # noqa: E402
-from posetube import COCO_KEYPOINTS, PoseFrameRecord, PoseTubeExtractor  # noqa: E402
-from rtmpose import RTMPoseEstimator  # noqa: E402
-from tracking import IouTracker, MultiClassTracker  # noqa: E402
+from objects import ObjectStage  # noqa: E402
+from perceive import check_preview_available, load_config, open_capture  # noqa: E402
+from pose import PoseStage, person_boxes_from_tracks  # noqa: E402
+from posetube import COCO_KEYPOINTS  # noqa: E402
+from tracking import IouTracker  # noqa: E402
 
 DEFAULT_MODEL = str(ROOT / "models" / "rtmpose_t.onnx")
 DEFAULT_ACTION_MODEL = str(ROOT / "models" / "posec3d_pose_only.onnx")
@@ -206,13 +205,18 @@ def main() -> int:
     if show:
         check_preview_available()
 
-    estimator = RTMPoseEstimator(model_path=args.model, runtime=args.runtime)
+    pose_stage = PoseStage({
+        "backend": "rtmpose",
+        "model_path": args.model,
+        "runtime": args.runtime,
+        "device": "cpu",
+    })
 
     detector = None
     tracker = None
+    cfg = None
     if args.detector or args.actions or args.objects:
         from detectors import build_detector
-        from perceive import load_config
 
         cfg = load_config(args.config)
         detector_cfg = dict(cfg["detector"])
@@ -230,59 +234,44 @@ def main() -> int:
         print(f"boxes from {detector.name}, ids from the IoU tracker",
               file=sys.stderr)
 
-    object_tracker = emitter = None
-    object_classes: list[str] = []
+    object_stage = emitter = None
     if args.objects:
         object_classes = [c for c in detector.classes if c != "person"]
-        if not object_classes:
-            raise SystemExit(
-                "no object classes configured. Add a 'classes' list to the "
-                "detector block of " + args.config + " -- the point of this "
-                "flag is that the list is a site decision, not a constant in "
-                "the source."
-            )
-        # One detector pass for people and objects together, split by label
-        # afterwards. A second instance would double the most expensive stage
-        # in the pipeline to re-run the same convolutions over the same frame;
-        # the per-class thresholds that motivated a second instance are
-        # already per class inside one.
-        object_tracker = MultiClassTracker()
-        emitter = EventEmitter(sensor_id=cfg.get("sensor_id", "cam-01"))
+        object_stage = ObjectStage(
+            object_classes=object_classes,
+            margin=args.object_margin,
+            min_wrist_score=args.min_score,
+            mode="all",
+        )
+        emitter = EventEmitter(sensor_id=(cfg or {}).get("sensor_id", "cam-01"))
         print(
             "objects: " + ", ".join(
                 f"{c} @ {detector.class_thresholds[c]:.2f}" for c in object_classes
             ),
             file=sys.stderr,
         )
-    else:
+    elif detector is None:
         print(
             "boxes from the whole frame -- one subject, centred. "
             "Add --detector once yolox_tiny.onnx is fetched for the real path.",
             file=sys.stderr,
         )
 
-    extractor = recognizer = policy = None
+    actions_stage = None
     if args.actions:
-        # Defaults, deliberately: 32 frames of 56x56 over 17 keypoints are what
-        # the checkpoint was trained on. Passing anything else here would
-        # produce a volume the network accepts and misreads, since the head
-        # global-pools before the classifier and never objects to the shape.
-        extractor = PoseTubeExtractor()
-        recognizer = PoseC3DRecognizer(
-            model_path=args.action_model,
-            classes=NTU60_CLASSES,
-            num_frames=extractor.num_frames,
-            heatmap_size=extractor.heatmap_size,
-            num_keypoints=extractor.num_keypoints,
-            device="cpu",
-        )
-        policy = AbstentionPolicy(
-            min_confidence=args.min_confidence, min_margin=args.min_margin
-        )
+        actions_stage = ActionsStage({
+            "backend": "posec3d",
+            "model_path": args.action_model,
+            "every_s": args.action_every,
+            "device": "cpu",
+            "classes": "ntu60",
+            "min_confidence": args.min_confidence,
+            "min_margin": args.min_margin,
+        })
         print(
-            f"actions from {recognizer.name} "
-            f"({extractor.num_frames} frames, {extractor.heatmap_size}px, "
-            f"{len(NTU60_CLASSES)} NTU classes), "
+            f"actions from {actions_stage.name} "
+            f"({actions_stage.extractor.num_frames} frames, "
+            f"{actions_stage.extractor.heatmap_size}px), "
             f"every {args.action_every:.1f}s per track",
             file=sys.stderr,
         )
@@ -331,17 +320,11 @@ def main() -> int:
     detect_ms = 0.0
     scores: list[float] = []
     per_joint: list[np.ndarray] = []
-    actions: dict = {}
     last_action_line: dict = {}
-    last_action = -1e9
     action_ms = 0.0
     object_ms = 0.0
     seen_objects = collections.Counter()
     attributed_objects = collections.Counter()
-    tube_ms = 0.0
-    infer_ms = 0.0
-    action_runs = 0
-    action_tubes = 0
     samples: list[tuple[np.ndarray, str]] = []
     next_sample = args.sheet_every
     started = time.perf_counter()
@@ -356,6 +339,7 @@ def main() -> int:
             height, width = frame.shape[:2]
 
             det_frame_ms = 0.0
+            object_detections = []
             if detector is not None:
                 t_det = time.perf_counter()
                 detections = detector.detect(frame)
@@ -363,17 +347,13 @@ def main() -> int:
                 detect_ms += det_frame_ms
                 object_detections = [d for d in detections if d.label != "person"]
                 detections = [d for d in detections if d.label == "person"]
-                boxes = {
-                    t.track_id: (t.detection.x1, t.detection.y1,
-                                 t.detection.x2, t.detection.y2)
-                    for t in tracker.update(detections)
-                }
+                boxes = person_boxes_from_tracks(tracker.update(detections))
             else:
                 boxes = {"whole-frame": whole_frame_box(width, height)}
 
             now_us_frame = monotonic_us()
             t0 = time.perf_counter()
-            poses = estimator.estimate(frame, boxes)
+            poses = pose_stage.estimate(frame, boxes)
             pose_frame_ms = (time.perf_counter() - t0) * 1000
             pose_ms += pose_frame_ms
             people += len(poses)
@@ -386,106 +366,44 @@ def main() -> int:
             held_objects = []
             object_events = []
             object_frame_ms = 0.0
-            if object_tracker is not None:
+            if object_stage is not None:
                 t_obj = time.perf_counter()
-                object_tracks = object_tracker.update(object_detections)
-                held_objects = associate(
-                    [(t.track_id, t.detection) for t in object_tracks],
-                    poses,
-                    margin=args.object_margin,
-                    min_wrist_score=args.min_score,
+                held_objects, object_events = object_stage.process(
+                    object_detections, poses, emitter, timestamp_us=now_us_frame
                 )
                 object_frame_ms = (time.perf_counter() - t_obj) * 1000
                 object_ms += object_frame_ms
-
-                by_id = {t.track_id: t for t in object_tracks}
                 for held in held_objects:
                     seen_objects[held.label] += 1
                     if held.attributed:
                         attributed_objects[held.label] += 1
 
-                    # Persistence over the track's own history, exactly as the
-                    # person path does it. A phone seen in 2 frames of 30 is a
-                    # flicker, and the confidence has to say so rather than the
-                    # event simply not existing.
-                    track = by_id[held.object_track_id]
-                    persistence = track.persistence(30)
-                    event = emitter.build(
-                        observation="object_at_station",
-                        # Raw detector score times persistence. NOT the
-                        # calibrated composition confidence.py builds for
-                        # people: quality is computed against person box height
-                        # and a temperature for objects has never been fitted.
-                        # Claiming a calibrated number here would be inventing
-                        # one -- see the note in the summary.
-                        confidence=round(held.score * persistence, 4),
-                        value=held.label,
-                        # The whole point: attributed to the person holding it,
-                        # or emitted with no track_id at all. An object nobody
-                        # is holding is a real observation, and dropping it
-                        # would make "no object" and "unattributed object"
-                        # indistinguishable downstream.
-                        track_id=held.held_by,
-                        subject={"class": "object"},
-                        timestamp_us=now_us_frame,
+            if actions_stage is not None:
+                actions_stage.push(now_us_frame, poses, boxes)
+                before_runs = actions_stage.runs
+                t_act = time.perf_counter()
+                results = actions_stage.maybe_infer(now_us_frame)
+                if actions_stage.runs != before_runs:
+                    action_ms += (time.perf_counter() - t_act) * 1000
+                for result in results:
+                    coverage = actions_stage.actions.get(
+                        result.track_id, (result, 0.0)
+                    )[1]
+                    line = (
+                        f"{result.track_id}  "
+                        + (f"{result.label} {result.confidence:.2f}"
+                           if result.decided
+                           else f"UNKNOWN ({result.reason})")
+                        + f"  [coverage {coverage:.2f}]"
                     )
-                    object_events.append(event)
+                    if line != last_action_line.get(result.track_id):
+                        print(f"  action  {line}", file=sys.stderr)
+                        last_action_line[result.track_id] = line
+                for gone in set(last_action_line) - set(actions_stage.actions):
+                    last_action_line.pop(gone, None)
 
+            actions = getattr(actions_stage, "actions", {}) if actions_stage else {}
             action_frame_ms = 0.0
-            if extractor is not None:
-                now_us = now_us_frame
-                extractor.push(PoseFrameRecord(
-                    timestamp_us=now_us, keypoints=poses, boxes=boxes,
-                ))
-
-                # Not every frame. One tube costs ~130 ms against a ~110 ms
-                # frame budget, so classifying continuously would halve the
-                # capture rate to re-answer a question whose evidence window is
-                # 1.5 seconds long and barely moves between frames.
-                if time.perf_counter() - last_action >= args.action_every:
-                    last_action = time.perf_counter()
-                    t_act = time.perf_counter()
-                    ready = extractor.tracks_ready(now_us)
-                    for track_id in ready:
-                        t_tube = time.perf_counter()
-                        tube = extractor.extract(track_id, now_us)
-                        if tube is None:
-                            continue
-                        tube_ms += (time.perf_counter() - t_tube) * 1000
-                        t_inf = time.perf_counter()
-                        raw = recognizer.infer(tube)
-                        infer_ms += (time.perf_counter() - t_inf) * 1000
-                        result = policy.decide(
-                            track_id, raw, backend=recognizer.name,
-                        )
-                        # Carry the tube's window onto the decision. Without it
-                        # a stale verdict is indistinguishable from a fresh
-                        # one, and every action finding is at least a window
-                        # old by construction.
-                        result.window_start_us = tube.window_start_us
-                        result.window_end_us = tube.window_end_us
-                        actions[track_id] = (result, tube.coverage)
-
-                        line = (
-                            f"{track_id}  "
-                            + (f"{result.label} {result.confidence:.2f}"
-                               if result.decided
-                               else f"UNKNOWN ({result.reason})")
-                            + f"  [coverage {tube.coverage:.2f}]"
-                        )
-                        if line != last_action_line.get(track_id):
-                            print(f"  action  {line}", file=sys.stderr)
-                            last_action_line[track_id] = line
-
-                    # Tracks the tracker dropped must not keep a verdict on
-                    # screen; a label outliving its subject is a lie.
-                    for gone in set(actions) - set(ready):
-                        actions.pop(gone, None)
-                        last_action_line.pop(gone, None)
-                    action_frame_ms = (time.perf_counter() - t_act) * 1000
-                    action_ms += action_frame_ms
-                    action_runs += 1
-                    action_tubes += len(ready)
 
             for held in held_objects:
                 ox1, oy1, ox2, oy2 = (int(v) for v in held.box)
@@ -627,11 +545,10 @@ def main() -> int:
             summary["objects_seen"] = dict(seen_objects)
             summary["objects_attributed"] = dict(attributed_objects)
             summary["object_ms_mean"] = round(object_ms / max(frames, 1), 2)
-        if action_runs:
-            summary["action_runs"] = action_runs
-            summary["action_ms_mean"] = round(action_ms / action_runs, 2)
-            summary["tube_ms_mean"] = round(tube_ms / max(action_tubes, 1), 2)
-            summary["posec3d_ms_mean"] = round(infer_ms / max(action_tubes, 1), 2)
+        if actions_stage is not None and actions_stage.runs:
+            summary["action_runs"] = actions_stage.runs
+            summary["action_ms_mean"] = round(action_ms / actions_stage.runs, 2)
+            summary["action_tubes"] = actions_stage.tubes
         if per_joint:
             stack = np.stack(per_joint)
             summary["mean_keypoint_score"] = round(float(np.mean(scores)), 4)
@@ -664,18 +581,12 @@ def main() -> int:
         print(f"detect          {detect_ms / max(frames, 1):.1f} ms per frame")
     print(f"pose            {pose_ms / max(frames, 1):.1f} ms per frame, "
           f"{people} person-inferences")
-    if action_runs:
-        # Split, because the two halves have different fixes. The volume is
-        # numpy on the CPU and stays there; the network is the part that would
-        # move to an NPU. Reporting one number hides which one to attack.
-        print(f"action          {action_ms / action_runs:.1f} ms per run "
-              f"({action_runs} runs at {args.action_every:.1f}s, "
-              f"{action_tubes} tube(s))")
-        if action_tubes:
-            print(f"  tube build    {tube_ms / action_tubes:.1f} ms per tube "
-                  f"(numpy heatmap volume)")
-            print(f"  posec3d       {infer_ms / action_tubes:.1f} ms per tube "
-                  f"(onnxruntime)")
+    if actions_stage is not None and actions_stage.runs:
+        # Split timing is no longer instrumented inside ActionsStage; report
+        # the cadence-gated wall time instead.
+        print(f"action          {action_ms / actions_stage.runs:.1f} ms per run "
+              f"({actions_stage.runs} runs at {args.action_every:.1f}s, "
+              f"{actions_stage.tubes} tube(s))")
     if detector is not None:
         # The number the board question actually turns on: pose is a *second*
         # model, and what matters is the two of them together against the frame
