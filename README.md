@@ -36,8 +36,11 @@ tools/
   lint_policy.py       catches what schema validation cannot
   inspect_checkpoint.py  read a .pth's input contract without torch
 perception/
-  perceive.py       camera -> events (see perception/README.md)
-  association.py    object-to-person attribution (demo path; not emitted by perceive.py)
+  perceive.py       production events pipeline (see perception/README.md)
+  objects.py        object tracks + object_at_station (shared with demo)
+  pose.py           RTMPose / stub pose stage (shared)
+  actions_stage.py  PoseC3D cadence + action_recognised (shared)
+  association.py    object-to-person wrist attribution
   detectors/        pluggable model backend; default YOLOX, Apache-2.0
   actions/          RTMPose + PoseC3D plumbing; NTU-60 head is not site-useful yet
 identity/
