@@ -2,6 +2,12 @@
 
 Webcam → person detection → zone membership → events on stdout.
 
+**`perceive.py` is the production events pipeline** (JSON-lines for the engine).
+**`tools/preview_pose.py` is the live demo** (preview window + JSONL log).
+Object detection, pose and action recognition are **opt-in stages** shared by
+both (`objects.py`, `pose.py`, `actions_stage.py`). With stages off,
+`perceive.py` is people-and-zones only.
+
 A **separate process** from the engine. It imports nothing from `engine/`, and a
 test enforces that by parsing every module's imports. The only thing crossing
 between them is a stream of JSON lines matching `schema/event.schema.json`.
@@ -21,7 +27,11 @@ python perception/tools/fetch_model.py          # yolox_tiny, Apache-2.0, ~20 MB
 python perception/tools/define_zone.py          # click your zone, copy the JSON
                                                 # into config/zones.example.json
 python perception/perceive.py --preview         # check it against the live view
-python perception/perceive.py                   # emit events
+python perception/perceive.py                   # emit events (people + zones)
+
+# Opt-in stages (same modules as preview_pose.py; need exported ONNX for real pose/actions)
+python perception/perceive.py --config perception/config/webcam.json --objects
+python perception/perceive.py --config perception/config/webcam.json --objects --actions
 ```
 
 On a laptop webcam, start from `config/webcam.json` instead -- it is a
@@ -31,6 +41,13 @@ because a seated subject's box is clipped by the bottom of the frame:
 ```bash
 python perception/perceive.py --config perception/config/webcam.json --preview
 ```
+
+Config keys `objects.enabled`, `pose.enabled`, `actions.enabled` default to
+false. CLI `--objects` / `--actions` override them (and imply pose). A stage
+that is enabled while its model file is missing **exits** and names
+`export_rtmpose.py` / `export_posec3d.py` — it does not run quietly without
+the stage. PoseC3D uses `--action-every` / `actions.every_s` (default 1s), not
+per-frame.
 
 Piping into a consumer, which is how it is meant to run:
 
@@ -43,6 +60,7 @@ Tests need no camera, no weights and no network:
 
 ```bash
 python perception/test_perception.py
+python perception/test_objects.py
 ```
 
 ## What it emits
@@ -53,6 +71,8 @@ python perception/test_perception.py
 | `person_left_zone` | Outside for `exit_frames` frames, or the track was lost while inside | `camera` | calibrated, < 1.0 |
 | `person_count` | Zone occupancy changed and held for `count_debounce_frames` | `camera` | weakest occupant |
 | `sensor_health` | Start-up, frame-grab failure, recovery, shutdown | `timer` | exactly `1.0` |
+| `object_at_station` | Opt-in. Class in `value`; holder's `track_id` when attributed, omitted when unheld | `camera` | score × persistence |
+| `action_recognised` | Opt-in. Class label, or `unknown` on abstention (not dropped) | `camera` | model confidence |
 
 A real 301-frame clip with four people produces **on the order of a dozen
 events, not one per frame**. Edge-triggered emission is the whole design: the
@@ -132,13 +152,13 @@ the same stream.
 Both shapes are validated against `schema/event.schema.json` in
 `test_objects.py`, using the repo's own validator.
 
-**Not wired to the engine yet, on purpose.** `perceive.py` does not emit these.
-The events are built by the real `EventEmitter` inside
-`preview_pose.py --objects` and written to the demo's JSONL log, so the false
-positive rate can be counted before anything acts on them:
+**Wired into `perceive.py` when `objects.enabled` or `--objects`.** The same
+`ObjectStage` builds events for both the production stdout path and the demo
+log. Count false positives with the demo first if you like:
 
 ```bash
 python3 perception/tools/preview_pose.py --objects --log
+python3 perception/perceive.py --config perception/config/webcam.json --objects
 ```
 
 Two honest gaps. The `confidence` on these events is the raw detector score
@@ -151,7 +171,11 @@ one. It is evidence, not proof.
 ## Layout
 
 ```
-perceive.py        capture -> detect -> track -> zones -> emit. The process.
+perceive.py        production events pipeline (stdout JSONL)
+objects.py         object tracks + object_at_station events (shared)
+pose.py            RTMPose / stub pose stage (shared)
+actions_stage.py   tubes → PoseC3D → action_recognised (shared)
+association.py     wrist-in-box object attribution
 zones.py           polygon config, point-in-polygon, enter/exit hysteresis
 tracking.py        greedy IoU tracker; mints track_id, measures persistence
 confidence.py      temperature scaling, quality, the components block
@@ -161,9 +185,12 @@ detectors/
   yolox_onnx.py      Apache-2.0. Default. cv2.dnn, no extra runtime.
   ultralytics_yolo.py AGPL-3.0. Gated, evaluation only. Do not ship.
   stub.py            scripted boxes; makes the tests camera-free
+actions/           RTMPose, pose tubes, PoseC3D — see actions/README.md
 config/            example config + field reference
-tools/             fetch_model.py, define_zone.py, validate_events.py
+tools/             fetch_model, define_zone, validate_events, preview_pose (demo),
+                   export_rtmpose, export_posec3d
 test_perception.py offline suite, runs the real CLI end to end
+test_objects.py    object events against schema/event.schema.json
 ```
 
 ## Which model
@@ -316,11 +343,13 @@ throughout. Both now have tests.
 - **The tracker swaps ids when people cross.** Greedy IoU is enough to mint a
   `track_id` and measure persistence; it is not enough for per-actor attribution
   in a crowd. ByteTrack (MIT — no licence problem) is the intended replacement.
-- **No PPE, pose, action or identity.** The schema's `ppe_*`,
-  `action_recognised` and `person_identified` observations need RTMPose and
-  ST-GCN, per the README's pipeline. This layer emits four of the nineteen
-  observations and nothing else — extending that list means committing to a
-  detector, a feasibility assessment and an ATP test, as the schema says.
+- **PPE is not implemented.** Pose and action plumbing live in `actions/` /
+  `pose.py` / `actions_stage.py` (RTMPose + PoseC3D). Identity is a separate
+  package (`identity/`). With stages off, `perceive.py` emits four observations
+  (`person_in_zone`, `person_left_zone`, `person_count`, `sensor_health`). With
+  `--objects` / `--actions` it also emits `object_at_station` and
+  `action_recognised`. Extending further means committing to a detector, a
+  feasibility assessment and an ATP test, as the schema says.
 - **`min_height_px: 40` is a guess until you measure it.** Stand in the real
   zone with `--preview` and read the actual box height.
 - **A zone polygon must reach `y = 1.0` if subjects are clipped by the bottom of
