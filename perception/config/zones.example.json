@@ -8,6 +8,7 @@
   },
   "detector": {
     "backend": "yolox-onnx",
+    "_comment_backend": "Which detector runs. Valid values: 'yolox-onnx' (Apache-2.0, the default, the one intended to ship), 'yolo26' (Ultralytics YOLO26, NMS-free end-to-end, AGPL-3.0 code AND weights -- internal evaluation only, needs perception/models/yolo26n.onnx from tools/export_yolo26.py and input_size [640, 640]), 'ultralytics' (AGPL-3.0, evaluation only, also needs acknowledge_agpl: true), 'stub' (scripted boxes, tests). Nothing outside perception/detectors/ knows which one is running, so this is the whole switch. Read perception/LICENCE-NOTES.md before choosing either AGPL backend: an ONNX export does not relicense Ultralytics weights.",
     "model_path": "perception/models/yolox_tiny.onnx",
     "input_size": [
       416,

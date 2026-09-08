@@ -136,6 +136,9 @@ perception/models/*.onnx
 # pose checkpoints, converted by tools/export_rtmpose.py -- 13 MB of weights
 # is not source, and the export is reproducible from the published .pth
 perception/models/*.pth
+# YOLO26 checkpoints, converted by tools/export_yolo26.py. AGPL-3.0 weights:
+# they must not end up in the repo by accident. See perception/LICENCE-NOTES.md
+perception/models/*.pt
 
 # Video/media files
 *.mp4

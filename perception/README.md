@@ -12,17 +12,22 @@ A **separate process** from the engine. It imports nothing from `engine/`, and a
 test enforces that by parsing every module's imports. The only thing crossing
 between them is a stream of JSON lines matching `schema/event.schema.json`.
 
-> **Licence, up front:** the obvious choice — Ultralytics YOLO — is **AGPL-3.0
-> and cannot ship in a commercial iOACAM**. The default here is **YOLOX,
-> Apache-2.0** for both code and weights. Full reasoning and the alternatives
-> considered: **[LICENCE-NOTES.md](LICENCE-NOTES.md)**. Read it before choosing
-> a model.
+> **Licence, up front:** the obvious choice — Ultralytics YOLO, including
+> YOLO26 — is **AGPL-3.0 and cannot ship in a commercial iOACAM**. The detector
+> is a config choice (`detector.backend`), and the default is **YOLOX,
+> Apache-2.0** for both code and weights. A `yolo26` backend exists alongside
+> it for bench comparison only; an ONNX export does not relicense Ultralytics
+> weights. Full reasoning and the alternatives considered:
+> **[LICENCE-NOTES.md](LICENCE-NOTES.md)**. Read it before choosing a model.
 
 ## Quick start
 
 ```bash
 pip install opencv-python numpy                 # the only dependencies
 python perception/tools/fetch_model.py          # yolox_tiny, Apache-2.0, ~20 MB
+                                                # the default backend; see
+                                                # "Which model" for the yolo26
+                                                # alternative
 
 python perception/tools/define_zone.py          # click your zone, copy the JSON
                                                 # into config/zones.example.json
@@ -61,6 +66,7 @@ Tests need no camera, no weights and no network:
 ```bash
 python perception/test_perception.py
 python perception/test_objects.py
+python perception/test_yolo26.py
 ```
 
 ## What it emits
@@ -89,17 +95,19 @@ Sample entry event:
    "quality":0.8651,"persistence":1.0,"agreement":1.0,"frames_observed":4}}
 ```
 
-Measured on this repo's laptop webcam. The whole chain is legible in it: YOLOX
-raw 0.898, softened to 0.770 by temperature scaling at T=1.8, then discounted to
+Measured on this repo's laptop webcam, with the default YOLOX backend. The
+whole chain is legible in it: the detector's raw 0.898, softened to 0.770 by temperature scaling at T=1.8, then discounted to
 0.666 by a quality term that noticed the subject was clipped by the frame edge.
 That it lands near the 0.6 in the schema's own worked example is a reasonable
 sign the calibration is in a sane range.
 
 ## Objects, and whose hand they are in
 
-YOLOX has always been COCO-80; this layer used to discard 79 of the classes and
-keep `person`. The enabled list is now config, because a different site wants a
-different list:
+Both COCO backends have always been COCO-80; this layer used to discard 79 of
+the classes and keep `person`. The enabled list is now config, because a
+different site wants a different list — and it is read by the same shared code
+(`detectors/coco.py`) whichever backend is running, so it survives a backend
+switch unchanged:
 
 ```json
 "classes": ["person", "cell phone", "laptop", "bottle", "cup",
@@ -232,15 +240,18 @@ confidence.py      temperature scaling, quality, the components block
 emit.py            event construction, monotonic clock, JSONL to stdout
 detectors/
   base.py            Detection + the Detector protocol. The licence seam.
+  coco.py            the COCO-80 list + class/threshold validation, shared
   yolox_onnx.py      Apache-2.0. Default. cv2.dnn, no extra runtime.
+  yolo26.py          AGPL-3.0. NMS-free. onnxruntime. Evaluation only.
   ultralytics_yolo.py AGPL-3.0. Gated, evaluation only. Do not ship.
   stub.py            scripted boxes; makes the tests camera-free
 actions/           RTMPose, pose tubes, PoseC3D — see actions/README.md
 config/            example config + field reference
 tools/             fetch_model, define_zone, validate_events, preview_pose (demo),
-                   export_rtmpose, export_posec3d
+                   export_rtmpose, export_posec3d, export_yolo26
 test_perception.py offline suite, runs the real CLI end to end
 test_objects.py    object events against schema/event.schema.json
+test_yolo26.py     YOLO26 decode, and that both backends agree exactly
 ```
 
 ## Which model
@@ -264,6 +275,32 @@ that silently never happened.
 tuning: `enter_frames: 5` is one second of confirmation, `exit_frames: 10` is
 two. If you change the model, re-check those numbers — they are in frames, not
 seconds, deliberately, because the debounce is about detector noise.
+
+### The other backend
+
+`detector.backend: "yolo26"` runs Ultralytics YOLO26 through onnxruntime
+instead. It is NMS-free end to end — a one-to-one head, so no NMS threshold to
+tune and no NMS operator in the graph, which is the part that matters for the
+RK3568 conversion still outstanding.
+
+**It is AGPL-3.0 in both code and weights and cannot ship**, exporting to ONNX
+notwithstanding. It is here to answer one question on your own footage: does a
+modern NMS-free detector buy enough recall over `yolox_tiny` to justify either
+buying Ultralytics' commercial licence or porting to a permissive NMS-free
+model (RT-DETR, D-FINE). See [LICENCE-NOTES.md](LICENCE-NOTES.md).
+
+```bash
+pip install ultralytics onnxruntime               # export-only, AGPL
+python perception/tools/export_yolo26.py --download   # -> models/yolo26n.onnx
+```
+
+The row above has no YOLO26 entry on purpose: no measurement on the 4-person
+scene has been taken yet, and a made-up number in a table people tune against
+is worse than a gap. When you take one, note that **`yolo predict` is not a
+valid comparison** — the `.pt` runs a one-to-many head plus NMS, while the
+exported graph runs the one-to-one head, and they give different answers.
+Compare `Yolo26Detector` against `YoloxOnnxDetector`, or ultralytics loading
+the exported `.onnx`.
 
 ## Will it run on another laptop
 
@@ -414,4 +451,7 @@ throughout. Both now have tests.
   TPM-keyed signature belongs at log-write time, not in this hot path.
 - **RKNN conversion is unverified.** YOLOX was chosen partly because its
   conversion path is well trodden, but as the repo README insists: confirm it on
-  the actual board before committing. That check costs nothing now.
+  the actual board before committing. That check costs nothing now. The same is
+  true of the `yolo26` graph, which has one advantage there — being NMS-free,
+  it contains no NMS operator for the converter to reject — and one
+  disqualifying disadvantage, which is its licence.

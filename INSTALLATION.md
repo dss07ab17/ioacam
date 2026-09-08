@@ -50,7 +50,7 @@ pip install -r requirements.txt
 
 ### 2. Verify the Install Before Downloading Anything
 
-Ten suites run with no camera and no model weights. Run them first: if they
+Eleven suites run with no camera and no model weights. Run them first: if they
 pass, the checkout is sound, and any later problem is a model or environment
 issue rather than a broken clone.
 
@@ -61,6 +61,7 @@ python3 harness/test_lint.py                 # linter tests
 python3 identity/test_identity.py
 python3 perception/test_perception.py
 python3 perception/test_objects.py
+python3 perception/test_yolo26.py            # YOLO26 decode + both backends agree
 python3 perception/test_stages.py            # opt-in stage wiring
 python3 perception/actions/test_actions.py
 python3 perception/actions/test_rtmpose.py
@@ -69,7 +70,12 @@ python3 perception/actions/test_posec3d.py
 
 ### 3. Download the Models
 
-**YOLOX** (person and object detection) — needed for anything camera-related:
+**The detector** — needed for anything camera-related. Which model runs is the
+`detector.backend` config field, not a fixture. Two COCO backends ship:
+`yolox-onnx` (Apache-2.0, the default) and `yolo26` (AGPL-3.0, evaluation
+only). You need the weights for whichever one you select.
+
+**YOLOX** (the default), person and object detection:
 
 ```bash
 python perception/tools/fetch_model.py
@@ -79,6 +85,57 @@ Downloads `perception/models/yolox_tiny.onnx` (~20 MB, Apache-2.0). For the
 larger accuracy-reference weights, `--model yolox_s`, then point
 `detector.model_path` at it. `onnxruntime` is not required for YOLOX; the
 default backend uses OpenCV DNN.
+
+**YOLO26** — optional, and only if you are evaluating it. Ultralytics
+publishes `.pt` checkpoints rather than ONNX, so this one is an export rather
+than a download:
+
+```bash
+pip install ultralytics onnxruntime          # export-only; see the note below
+python perception/tools/export_yolo26.py --download
+```
+
+Fetches `yolo26n.pt` and writes `perception/models/yolo26n.onnx` (~10 MB),
+NMS-free and end to end, then verifies it two ways before reporting success:
+the shipped decode against Ultralytics' own postprocess on the same graph, and
+the converted graph against the original checkpoint. A non-zero exit means do
+not use the file.
+
+`ultralytics` is needed for that one offline step and **must not** end up on
+the inference path — `perception/detectors/yolo26.py` runs on onnxruntime and
+numpy alone, which is what keeps the RK3568 port a conversion job. Same rule as
+`torch` for the pose models below.
+
+> **Licence:** YOLO26 is an Ultralytics model. Its code **and its pretrained
+> weights** are AGPL-3.0, and exporting to ONNX does not change that. That is
+> fine for internal evaluation on your own footage; it is not shippable without
+> an Ultralytics commercial licence. The backend prints an AGPL banner on
+> startup and says so in the licence line `perceive.py` logs. Read
+> [perception/LICENCE-NOTES.md](perception/LICENCE-NOTES.md) first.
+
+**Switching backends.** One field, plus the weights for the model you picked:
+
+```jsonc
+// perception/config/zones.example.json
+"detector": {
+  "backend": "yolo26",                              // or "yolox-onnx" (default)
+  "model_path": "perception/models/yolo26n.onnx",   // yolox_tiny.onnx for YOLOX
+  "input_size": [640, 640]                          // [416, 416] for yolox_tiny
+}
+```
+
+Or for one run, without editing anything:
+
+```bash
+python perception/perceive.py --backend yolo26 --config <a config pointing at the .onnx>
+```
+
+`classes`, `class_thresholds` and `score_threshold` mean the same thing under
+both and need no edit. `nms_threshold` and `p6` are YOLOX-only — YOLO26's head
+is NMS-free — and are accepted and ignored rather than rejected, so a config
+switches over without being rewritten. `input_size` is the one that must match:
+YOLO26's graph has a static input axis, and a mismatch is refused at load with
+both sizes named.
 
 **RTMPose and PoseC3D** — only for the pose and action stages. These need
 `torch` and `onnx`, both commented out in `requirements.txt` because they are
@@ -107,8 +164,11 @@ pip install onnxruntime
 ```
 
 Model weights are **not** in the repository — `.gitignore` excludes
-`perception/models/*.onnx` and `*.pth`. They are build artefacts, and 63 MB of
-binaries in git history is permanent. Regenerate with the three commands above.
+`perception/models/*.onnx`, `*.pth` and `*.pt`. They are build artefacts, and
+63 MB of binaries in git history is permanent. Regenerate with the commands
+above. The `*.pt` rule matters for a second reason: YOLO26 checkpoints are
+AGPL-3.0, and committing them would put AGPL weights in the repository by
+accident.
 
 ### 4. Define Your Zones
 
@@ -282,17 +342,22 @@ problem.
 - **Second example:** `workflows/pick_and_place_policy.json`
 - **Schemas:** `schema/event.schema.json`, `schema/workflow.schema.json`
 
-`detector.classes` decides which of YOLOX's 80 COCO classes this site cares
-about, and `detector.class_thresholds` gives each its own floor — one threshold
-cannot serve a person filling the frame and a phone 40 px across. Tune them
-against a logged run before trusting any of them.
+`detector.classes` decides which of the detector's 80 COCO classes this site
+cares about, and `detector.class_thresholds` gives each its own floor — one
+threshold cannot serve a person filling the frame and a phone 40 px across.
+Tune them against a logged run before trusting any of them. Both COCO backends
+read these keys with the same meaning, so they survive a backend switch.
 
 ## Troubleshooting
 
 ### Model Download Fails
 
-Manually: https://github.com/Megvii-BaseDetection/YOLOX/releases, place in
-`perception/models/yolox_tiny.onnx`.
+YOLOX, manually: https://github.com/Megvii-BaseDetection/YOLOX/releases, place
+in `perception/models/yolox_tiny.onnx`.
+
+YOLO26 has no ONNX release to download — `export_yolo26.py` converts the `.pt`
+locally. If the export fails, it says which of its two checks failed rather
+than leaving an unverified graph behind.
 
 If a downloaded `.pth` will not load, check its size first. A file of a few KB
 is usually an HTML error page saved with the wrong extension.
@@ -353,8 +418,12 @@ python3 harness/runner.py
 
 ## Licence Notes
 
-The perception layer uses **YOLOX** (Apache-2.0), not Ultralytics YOLO
-(AGPL-3.0). See [perception/LICENCE-NOTES.md](perception/LICENCE-NOTES.md).
+The perception layer defaults to **YOLOX** (Apache-2.0), not Ultralytics YOLO
+(AGPL-3.0). The detector is a config choice, and two of the available backends
+— `ultralytics` and `yolo26` — are AGPL-3.0 in both code and weights. They are
+there for bench comparison on your own footage and must not be present in a
+delivered build. An ONNX export does not relicense Ultralytics weights. See
+[perception/LICENCE-NOTES.md](perception/LICENCE-NOTES.md).
 
 The action models carry a separate concern: PoseC3D checkpoints are commonly
 pretrained on **NTU RGB+D**, which is research-only under an academic use

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .base import Detection, Detector
 
-BACKENDS = ("yolox-onnx", "ultralytics", "stub")
+BACKENDS = ("yolox-onnx", "yolo26", "ultralytics", "stub")
 
 
 def build_detector(cfg: dict) -> Detector:
@@ -24,6 +24,28 @@ def build_detector(cfg: dict) -> Detector:
             # false-positive rate nobody has measured yet.
             classes=cfg.get("classes", ("person",)),
             class_thresholds=cfg.get("class_thresholds"),
+        )
+
+    if backend == "yolo26":
+        from .yolo26 import Yolo26Detector
+
+        # Deliberately the same keys as yolox-onnx, read with the same
+        # defaults, so switching a site's config is one string. The two that
+        # cannot mean the same thing are passed anyway and ignored by the
+        # backend: `nms_threshold` has no referent in a one-to-one head, and
+        # `p6` is a YOLOX head-layout flag. See yolo26.py -- raising on them
+        # would make the one-line switch a two-line one for no gain.
+        return Yolo26Detector(
+            model_path=cfg.get("model_path", "perception/models/yolo26n.onnx"),
+            # 640, not YOLOX's 416: this is the size the checkpoint was trained
+            # and exported at, and the graph's input axis is static.
+            input_size=tuple(cfg.get("input_size", (640, 640))),
+            score_threshold=cfg.get("score_threshold", 0.30),
+            classes=cfg.get("classes", ("person",)),
+            class_thresholds=cfg.get("class_thresholds"),
+            device=cfg.get("device", "cpu"),
+            nms_threshold=cfg.get("nms_threshold"),
+            p6=cfg.get("p6"),
         )
 
     if backend == "ultralytics":

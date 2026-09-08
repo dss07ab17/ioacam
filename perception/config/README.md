@@ -14,8 +14,11 @@ in `perceive.py`.
 |---|---|
 | `sensor_id` | Goes into every event. Must match a `covered_by` entry in the policy's zone list, or the engine's coverage check cannot associate this camera with a zone. |
 | `camera.index` | Webcam index. `0` is the built-in laptop camera. Override with `--source` for a video file. |
-| `detector.backend` | `yolox-onnx` (Apache-2.0, default, ships) / `ultralytics` (AGPL-3.0, evaluation only) / `stub` (tests). |
+| `detector.backend` | Which detector runs. `yolox-onnx` (Apache-2.0, **default**, ships) / `yolo26` (AGPL-3.0, NMS-free, evaluation only) / `ultralytics` (AGPL-3.0, evaluation only, also needs `acknowledge_agpl`) / `stub` (tests). The detector is a config choice, not a fixture: nothing outside `detectors/` knows which one is running. Read [LICENCE-NOTES.md](../LICENCE-NOTES.md) before choosing either AGPL one. |
+| `detector.model_path` | The weights for that backend, so it changes with `backend`: `perception/models/yolox_tiny.onnx` (fetched by `tools/fetch_model.py`) or `perception/models/yolo26n.onnx` (exported by `tools/export_yolo26.py`). |
+| `detector.input_size` | `[416, 416]` for `yolox_tiny`, `[640, 640]` for YOLO26 — the size the graph was exported at. YOLO26's input axis is static, so a mismatch is rejected at load with the two sizes named rather than tolerated. |
 | `detector.score_threshold` | Raw model score floor, applied before calibration. Lower it to trade precision for recall; the confidence pipeline downstream will discount weak detections anyway. |
+| `detector.nms_threshold` | IoU floor for within-class NMS. `yolox-onnx` only: YOLO26's head is one-to-one and emits no duplicates, so the key is accepted and ignored there rather than rejected — switching `backend` should not mean editing the rest of the block. |
 | `calibration.temperature` | Divides the logit. **Must match `calibration.temperature` in the policy file**, or the engine compares confidences against thresholds tuned on a different scale. |
 | `zones[].coordinates` | `normalized` (0..1, default) or `pixel`. Normalised survives a resolution change; pixel does not. |
 | `zones[].polygon` | At least 3 points, in order around the boundary. Generate it with `tools/define_zone.py`. |

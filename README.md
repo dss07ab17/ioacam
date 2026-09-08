@@ -15,6 +15,7 @@ python3 perception/actions/test_rtmpose.py
 python3 perception/actions/test_posec3d.py
 python3 perception/test_perception.py
 python3 perception/test_objects.py
+python3 perception/test_yolo26.py
 ```
 
 All suites pass; the example policy lints clean.
@@ -41,7 +42,8 @@ perception/
   pose.py           RTMPose / stub pose stage (shared)
   actions_stage.py  PoseC3D cadence + action_recognised (shared)
   association.py    object-to-person wrist attribution
-  detectors/        pluggable model backend; default YOLOX, Apache-2.0
+  detectors/        pluggable model backend, chosen by config; default YOLOX,
+                    Apache-2.0. YOLO26 (AGPL, NMS-free) alongside for evaluation
   actions/          RTMPose + PoseC3D plumbing; NTU-60 head is not site-useful yet
 identity/
   roster.py         who is where, from access control transactions
@@ -260,7 +262,10 @@ real source feeding it.
 block in `event.schema.json` is specified and unimplemented.
 
 **The board.** YOLOX and RTMPose already export to ONNX in this repo
-(`perception/tools/fetch_model.py`, `perception/tools/export_rtmpose.py`).
+(`perception/tools/fetch_model.py`, `perception/tools/export_rtmpose.py`), and
+so does the alternative YOLO26 detector (`perception/tools/export_yolo26.py`),
+which is NMS-free and so carries no NMS operator for the converter to reject —
+but is AGPL-3.0 and cannot ship.
 Confirm conversion through RKNN-Toolkit2 on real hardware, then measure what
 NPU headroom remains once face recognition runs alongside. That answer
 decides one board or two, and it belongs in the proposal. A model that will

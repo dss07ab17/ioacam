@@ -18,14 +18,18 @@ perception/         Camera detection layer (separate process)
   emit.py           Event emission
   detectors/        Pluggable detector implementations
     base.py         Detection + Detector protocol
+    coco.py         COCO-80 names + class/threshold validation, shared
     yolox_onnx.py   Apache-2.0 default (cv2.dnn)
+    yolo26.py       AGPL-3.0, NMS-free, onnxruntime; evaluation only
     ultralytics_yolo.py  AGPL-3.0, evaluation only
     stub.py         Scripted boxes for tests
   actions/          Pose tubes, RTMPose, PoseC3D (see actions/README.md)
   tools/            fetch_model.py, define_zone.py, validate_events.py,
-                    preview_pose.py, export_rtmpose.py, export_posec3d.py
+                    preview_pose.py, export_rtmpose.py, export_posec3d.py,
+                    export_yolo26.py
   test_perception.py
   test_objects.py
+  test_yolo26.py
 
 identity/           Badge roster + face-matcher seam (tests use StubMatcher)
   roster.py matcher.py resolver.py test_identity.py
@@ -95,6 +99,7 @@ perception/engine import isolation.
 python3 identity/test_identity.py
 python3 perception/test_perception.py
 python3 perception/test_objects.py
+python3 perception/test_yolo26.py
 python3 perception/test_stages.py
 python3 perception/actions/test_actions.py
 python3 perception/actions/test_rtmpose.py
@@ -218,8 +223,9 @@ The response matrix in the policy maps (verdict, severity, confidence) →
 ## Performance Considerations
 
 ### Perception Layer
-- Runs at camera framerate (typically 30 FPS on paper; YOLOX-tiny on a
-  laptop CPU is closer to ~5 fps — debounce is in **frames**, not seconds)
+- Runs at camera framerate (typically 30 FPS on paper; the default
+  YOLOX-tiny backend on a laptop CPU is closer to ~5 fps — debounce is in
+  **frames**, not seconds)
 - Emits only edge-triggered events (~dozen per 300 frames)
 - Confidence calculation is deterministic and fast
 
@@ -229,7 +235,10 @@ The response matrix in the policy maps (verdict, severity, confidence) →
 - On-device: tick() runs from periodic timer (every few hundred ms)
 
 ### Optimization Tips
-- Use YOLOX tiny for real-time inference on edge devices
+- The detector is a config choice (`detector.backend`). `yolox_tiny` is the
+  default and the shippable one; `yolo26` is an NMS-free alternative that is
+  AGPL-3.0 and evaluation-only, and whose speed on this scene has not been
+  measured yet. Use `yolox_tiny` for real-time inference on edge devices
 - Reduce detection confidence thresholds to catch more violations (but more false positives)
 - Use sensor_health events to skip perception when cameras are offline
 

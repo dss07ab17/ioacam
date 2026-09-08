@@ -8,6 +8,7 @@
   },
   "detector": {
     "backend": "yolox-onnx",
+    "_comment_backend": "Which detector runs. Valid values: 'yolox-onnx' (Apache-2.0, the default, the one intended to ship), 'yolo26' (Ultralytics YOLO26, NMS-free end-to-end, AGPL-3.0 code AND weights -- internal evaluation only, needs perception/models/yolo26n.onnx from tools/export_yolo26.py and input_size [640, 640]), 'ultralytics' (AGPL-3.0, evaluation only, also needs acknowledge_agpl: true), 'stub' (scripted boxes, tests). Nothing outside perception/detectors/ knows which one is running, so this is the whole switch. Read perception/LICENCE-NOTES.md before choosing either AGPL backend: an ONNX export does not relicense Ultralytics weights.",
     "classes": [
       "person",
       "cell phone",
@@ -20,7 +21,7 @@
       "scissors",
       "knife"
     ],
-    "_comment_classes": "Which of YOLOX's 80 COCO classes this site cares about. 'person' drives tracking, zones and pose; the rest are objects, attributed to whoever is holding them. A different site wants a different list, which is why it lives here rather than in yolox_onnx.py. Only COCO names are valid -- the model knows nothing else, and a site-specific object (a torque wrench, a specific tool) needs a detector trained on it. An unknown name is rejected at construction rather than silently returning nothing.",
+    "_comment_classes": "Which of the detector's 80 COCO classes this site cares about. Both COCO backends -- yolox-onnx and yolo26 -- read this key with the same meaning, from the same shared code in perception/detectors/coco.py, so the list survives a backend switch unchanged. 'person' drives tracking, zones and pose; the rest are objects, attributed to whoever is holding them. A different site wants a different list, which is why it lives here rather than in a backend module. Only COCO names are valid -- the model knows nothing else, and a site-specific object (a torque wrench, a specific tool) needs a detector trained on it. An unknown name is rejected at construction rather than silently returning nothing.",
     "class_thresholds": {
       "person": 0.35,
       "cell phone": 0.5,

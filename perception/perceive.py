@@ -553,7 +553,7 @@ def main() -> int:
     parser.add_argument("--source", default=None,
                         help="Override the camera index, or give a video file path")
     parser.add_argument("--backend", default=None,
-                        choices=["yolox-onnx", "ultralytics", "stub"])
+                        choices=["yolox-onnx", "yolo26", "ultralytics", "stub"])
     parser.add_argument("--sensor-id", default=None)
     parser.add_argument("--preview", action="store_true",
                         help="Show the annotated frame. Use it to tune the polygon.")

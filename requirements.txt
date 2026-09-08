@@ -4,9 +4,17 @@
 opencv-python>=4.8.0
 numpy>=1.24.0
 
-# Optional: For YOLOX model inference
-# Note: Already included in perception setup via fetch_model.py
-# onnxruntime>=1.16.0  # Uncomment if using ONNX-based detectors
+# The detector backend is a config choice (perception/config/README.md).
+# The default, yolox-onnx, needs nothing beyond the opencv above: it runs the
+# Apache-2.0 YOLOX graph fetched by perception/tools/fetch_model.py through
+# cv2.dnn. That is why it is the default -- the permissive option is also the
+# lightest one.
+#
+# The yolo26 backend needs onnxruntime and has no cv2.dnn fallback: OpenCV's
+# DNN importer does not accept the end-to-end head's ops. It is AGPL-3.0 in
+# both code and weights and is for internal evaluation only -- see
+# perception/LICENCE-NOTES.md.
+# onnxruntime>=1.16.0
 
 # Recommended for the RTMPose pose backend (perception/actions/rtmpose.py).
 # Not required -- it falls back to the cv2.dnn already needed for capture, at
@@ -18,6 +26,14 @@ numpy>=1.24.0
 # perception/tools/export_rtmpose.py. MMPose is deliberately not needed.
 # torch>=2.0.0
 # onnx>=1.14.0
+
+# Export only, on the same terms and for the same reason: converting a YOLO26
+# .pt to an NMS-free ONNX graph once, offline, with
+# perception/tools/export_yolo26.py. AGPL-3.0 -- installing it is fine for
+# internal evaluation and is not distribution, but it must never reach the
+# inference path: perception/detectors/yolo26.py imports onnxruntime and numpy
+# and nothing else, which is what keeps the RK3568 port a conversion job.
+# ultralytics>=8.4
 
 # Testing
 pytest>=7.4.0

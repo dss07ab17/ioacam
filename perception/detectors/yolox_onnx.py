@@ -26,27 +26,16 @@ import numpy as np
 
 from .base import Detection
 
-COCO_PERSON_CLASS = 0
-
-# The 80 COCO classes, in the order the head emits them. The graph has always
-# produced all of these -- this backend simply threw 79 of them away. Order is
-# the only thing mapping a column to a meaning, so it is not editable.
-COCO_CLASSES = (
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
-    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
-    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag",
-    "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite",
-    "baseball bat", "baseball glove", "skateboard", "surfboard",
-    "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon",
-    "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot",
-    "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant",
-    "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote",
-    "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
-    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-    "hair drier", "toothbrush",
+# The 80 COCO classes and the class-list validation now live in coco.py: this
+# is no longer the only COCO-trained backend, and two copies of an
+# order-sensitive list drift silently. Re-exported here so
+# `from detectors.yolox_onnx import CLASS_INDEX, COCO_CLASSES` keeps working.
+from .coco import (  # noqa: F401
+    CLASS_INDEX,
+    COCO_CLASSES,
+    COCO_PERSON_CLASS,
+    resolve_classes,
 )
-CLASS_INDEX = {name: i for i, name in enumerate(COCO_CLASSES)}
 
 
 class YoloxOnnxDetector:
@@ -62,13 +51,20 @@ class YoloxOnnxDetector:
         p6: bool = False,
         classes: Sequence[str] = ("person",),
         class_thresholds: dict[str, float] | None = None,
+        net=None,
     ) -> None:
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(
-                f"YOLOX weights not found at {model_path}.\n"
-                "Fetch them with:  python perception/tools/fetch_model.py"
-            )
-        self.net = cv2.dnn.readNetFromONNX(model_path)
+        # `net` is a test seam, matching the `session` argument on
+        # RTMPoseEstimator: it lets the decode be exercised against a scripted
+        # head output with no weights on disk. Nothing in the config reaches it.
+        if net is None:
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(
+                    f"YOLOX weights not found at {model_path}.\n"
+                    "Fetch them with:  python perception/tools/fetch_model.py"
+                )
+            net = cv2.dnn.readNetFromONNX(model_path)
+        self.net = net
+        self.model_path = model_path
         self.input_size = (int(input_size[0]), int(input_size[1]))  # (h, w)
         self.score_threshold = float(score_threshold)
         self.nms_threshold = float(nms_threshold)
@@ -77,26 +73,11 @@ class YoloxOnnxDetector:
         # Which of the 80 the site cares about. Defaults to person alone, so
         # every existing caller keeps exactly the behaviour it had; a site that
         # wants objects names them in config rather than editing this file.
-        unknown = [c for c in classes if c not in CLASS_INDEX]
-        if unknown:
-            raise ValueError(
-                f"not COCO classes: {unknown}. This model knows only its 80 "
-                f"training classes -- a site-specific object (a torque wrench, "
-                f"a specific tool) needs a detector trained on it, and asking "
-                f"for it here would silently return nothing."
-            )
-        if not classes:
-            raise ValueError("classes is empty: the detector would return nothing")
-        self.classes = tuple(classes)
-
-        # Per class, because one threshold cannot serve both. A person fills
-        # the frame and scores 0.95; a phone is 40 pixels across and scores
-        # 0.45 when it is really there. One number either floods the log with
-        # phantom objects or never sees a real one.
-        self.class_thresholds = {
-            name: float((class_thresholds or {}).get(name, score_threshold))
-            for name in self.classes
-        }
+        # Validation and the per-class threshold expansion are shared with the
+        # yolo26 backend so a class list behaves identically under both.
+        self.classes, self.class_thresholds = resolve_classes(
+            classes, self.score_threshold, class_thresholds
+        )
         self._grids: np.ndarray | None = None
         self._strides: np.ndarray | None = None
 
