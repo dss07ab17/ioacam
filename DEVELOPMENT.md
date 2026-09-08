@@ -95,10 +95,26 @@ perception/engine import isolation.
 python3 identity/test_identity.py
 python3 perception/test_perception.py
 python3 perception/test_objects.py
+python3 perception/test_stages.py
 python3 perception/actions/test_actions.py
 python3 perception/actions/test_rtmpose.py
 python3 perception/actions/test_posec3d.py
 ```
+
+### Diagnosing object attribution
+
+When objects are detected but never attributed to anybody, replay the run log
+through the real association code before changing any setting:
+
+```bash
+python3 perception/tools/diagnose_association.py logs/run.jsonl --verbose
+python3 perception/tools/diagnose_association.py logs/run.jsonl --compare
+```
+
+It prints every hand anchor, its distance to the object in pixels and relative
+to both the object box and body scale, and which gate rejected it. `--compare`
+replays the pre-2026-09 object-box rule alongside, so a geometry change is
+reported as a measured before-and-after rather than asserted.
 
 `perception/test_perception.py` parses every module under `perception/` and
 fails if anything imports `engine`.

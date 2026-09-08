@@ -129,13 +129,61 @@ confidence, so a two-frame flicker is visibly weaker than a steady observation.
 
 **Association is the inference**, and it lives in `association.py` alone rather
 than spread through a loop. An object is held by a person if one of that
-person's wrist keypoints falls inside the object's box, grown by a margin;
-nearest wrist wins. A wrist, not a box overlap — a phone on a desk sits inside
-its owner's bounding box whenever they lean over it. A margin, because the hand
-occludes what it holds and the wrist lands just outside. And a wrist below the
-score threshold cannot claim anything: an occluded wrist's position is a
-prediction, and attributing a knife to a prediction is precisely the confident
-wrong answer this system is built to avoid.
+person's **hand anchors** lands within **reach** of the object's box; the
+nearest anchor wins, and a near-tie between two people wins for neither.
+
+*The anchor* is where the hand is, which is not where the wrist keypoint is.
+COCO-17 has no finger keypoints, so a phone gripped in the fingers sits several
+centimetres beyond the wrist, in the direction the forearm points. When wrist
+and elbow are both confident the anchor is the wrist pushed forward along the
+elbow-to-wrist vector by a third of the forearm. The plain wrist is kept as a
+second anchor because extrapolation overshoots on a foreshortened arm, and the
+elbow serves as a third when the wrist is not confident enough to be believed —
+an occluded wrist should degrade the answer, not erase it. A wrist, not a box
+overlap: a phone on a desk sits inside its owner's bounding box whenever they
+lean over it.
+
+*The reach* is a fraction of **body scale**, not of the object's box. This was
+the bug. Reach as a fraction of the object made a 60 px phone allow 15 px,
+which is smaller than the wrist-to-grip offset it needed to cover, while a
+400 px laptop allowed 100 px for no reason but its own size. How far a grip
+sits from a wrist keypoint is a property of the arm. Body scale is the longest
+apparent limb on that person — the longest because perspective only ever
+shortens a limb in the image, so the largest measurement is the least
+foreshortened and the best estimate, and it tracks the subject automatically as
+they walk towards the camera.
+
+*The doubt* is two gates that decline rather than guess. A keypoint below
+`min_wrist_score` is a predicted position, not an observed one, and attributing
+a knife to a prediction is precisely the confident wrong answer this system is
+built to avoid. And when two different people's anchors are within `tie_ratio`
+of each other, the object goes to **neither**: nearest-anchor between two
+equally close people is a coin toss, and the engine accumulates evidence
+against whichever `track_id` it lands on.
+
+**When attribution goes wrong, measure it before tuning it.**
+`objects_seen: {"cell phone": 8}` beside `objects_attributed: {}` is a symptom
+consistent with a bad detector, a bad pose, a bad threshold, a bad margin and
+two stages running on different frames.
+`tools/diagnose_association.py` replays a run log through the real
+`associate()` and prints, per detection, every anchor with its score, the
+distance to the object in pixels and as a fraction of both the object box and
+body scale, and which gate rejected it:
+
+```bash
+python3 perception/tools/diagnose_association.py logs/run.jsonl --verbose
+python3 perception/tools/diagnose_association.py logs/run.jsonl --compare
+```
+
+`--compare` also replays the previous object-box rule, so a change to this
+geometry is reported as a before-and-after on real footage rather than
+asserted. Every `HeldObject` carries the same `.report` in-process.
+
+The settings live in the `objects` block of the config, and each is calibrated
+against logged runs rather than chosen by taste — `body_margin` in particular
+sits in the middle of the 0.30–0.35 plateau where every held phone in
+`logs/run.jsonl` and `logs/both-live.jsonl` attributes and the desk cup in
+`logs/objects-run2.jsonl` does not. At 0.40 the cup starts being attributed.
 
 An object nobody is holding emits **with no `track_id`**, not dropped. A knife
 on a bench with no one near it is a real observation, and often the more
@@ -165,8 +213,10 @@ Two honest gaps. The `confidence` on these events is the raw detector score
 times track persistence — **not** the calibrated composition `confidence.py`
 builds for people, because quality is computed against person box height and no
 temperature has ever been fitted for objects. And association is monocular with
-no depth: two people shoulder to shoulder will sometimes attribute to the wrong
-one. It is evidence, not proof.
+no depth: an object directly behind a hand looks exactly like an object in it,
+and two people shoulder to shoulder will sometimes attribute to the wrong one —
+the tie gate abstains on the closest calls, but it cannot see depth either. It
+is evidence, not proof.
 
 ## Layout
 
@@ -175,7 +225,7 @@ perceive.py        production events pipeline (stdout JSONL)
 objects.py         object tracks + object_at_station events (shared)
 pose.py            RTMPose / stub pose stage (shared)
 actions_stage.py   tubes → PoseC3D → action_recognised (shared)
-association.py     wrist-in-box object attribution
+association.py     hand-anchor object attribution + per-object reports
 zones.py           polygon config, point-in-polygon, enter/exit hysteresis
 tracking.py        greedy IoU tracker; mints track_id, measures persistence
 confidence.py      temperature scaling, quality, the components block

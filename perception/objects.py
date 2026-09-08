@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from association import HeldObject, associate
+from association import (
+    BODY_MARGIN, HAND_EXTENSION, HeldObject, OBJECT_MARGIN, TIE_RATIO,
+    associate,
+)
 from emit import EventEmitter
 from tracking import MultiClassTracker, Track
 
@@ -50,10 +53,13 @@ class ObjectStage:
     def __init__(
         self,
         object_classes: Sequence[str],
-        margin: float = 0.25,
+        margin: float = OBJECT_MARGIN,
         min_wrist_score: float = 0.30,
         persistence_window: int = 30,
         mode: str = "edge",
+        body_margin: float = BODY_MARGIN,
+        hand_extension: float = HAND_EXTENSION,
+        tie_ratio: float = TIE_RATIO,
     ) -> None:
         if not object_classes:
             raise ValueError(
@@ -66,6 +72,9 @@ class ObjectStage:
         self.object_classes = list(object_classes)
         self.margin = float(margin)
         self.min_wrist_score = float(min_wrist_score)
+        self.body_margin = float(body_margin)
+        self.hand_extension = float(hand_extension)
+        self.tie_ratio = float(tie_ratio)
         self.persistence_window = int(persistence_window)
         self.mode = mode
         self.tracker = MultiClassTracker()
@@ -78,14 +87,25 @@ class ObjectStage:
         poses: dict,
         emitter: EventEmitter,
         timestamp_us: Optional[int] = None,
+        person_boxes: Optional[dict] = None,
     ) -> tuple[list[HeldObject], list[dict]]:
-        """Update tracks, associate wrists, return (held, events)."""
+        """Update tracks, associate hands, return (held, events).
+
+        `poses` and `person_boxes` must both come from THIS frame. The caller
+        passes the same boxes it fed the pose estimator: association reads them
+        only to bound body scale, but reading a stale box would silently widen
+        or narrow one person's reach for reasons invisible in the output.
+        """
         object_tracks = self.tracker.update(object_detections)
         held_objects = associate(
             [(t.track_id, t.detection) for t in object_tracks],
             poses,
             margin=self.margin,
             min_wrist_score=self.min_wrist_score,
+            person_boxes=person_boxes,
+            body_margin=self.body_margin,
+            hand_extension=self.hand_extension,
+            tie_ratio=self.tie_ratio,
         )
         by_id = {t.track_id: t for t in object_tracks}
         events = self._events_for(held_objects, by_id, emitter, timestamp_us)

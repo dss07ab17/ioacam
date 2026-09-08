@@ -37,6 +37,9 @@ import cv2  # noqa: E402
 
 import confidence as conf  # noqa: E402
 from actions_stage import ActionsStage  # noqa: E402
+from association import (  # noqa: E402
+    BODY_MARGIN, HAND_EXTENSION, OBJECT_MARGIN, TIE_RATIO,
+)
 from detectors import build_detector  # noqa: E402
 from emit import EventEmitter, log, monotonic_us  # noqa: E402
 from objects import ObjectStage  # noqa: E402
@@ -65,9 +68,15 @@ DEFAULTS = {
     "zones": [],
     # Opt-in stages. Off by default so an unchanged config is byte-compatible
     # with the people-and-zones path.
+    # Association geometry. Each of these is a claim about anatomy rather
+    # than a tuning knob, and association.py says what each one means; the
+    # numbers are repeated here only so a site can override them.
     "objects": {
         "enabled": False,
-        "margin": 0.25,
+        "margin": 0.25,            # reach floor, as a fraction of the object box
+        "body_margin": 0.33,       # reach, as a fraction of the person's body scale
+        "hand_extension": 0.35,    # wrist-to-grip, as a fraction of the forearm
+        "tie_ratio": 0.10,         # two people this close are treated as tied
         "min_wrist_score": 0.30,
         "persistence_window": 30,
     },
@@ -253,8 +262,11 @@ def run(cfg: dict, args) -> int:
         ocfg = cfg.get("objects") or {}
         object_stage = ObjectStage(
             object_classes=object_classes,
-            margin=float(ocfg.get("margin", 0.25)),
+            margin=float(ocfg.get("margin", OBJECT_MARGIN)),
             min_wrist_score=float(ocfg.get("min_wrist_score", 0.30)),
+            body_margin=float(ocfg.get("body_margin", BODY_MARGIN)),
+            hand_extension=float(ocfg.get("hand_extension", HAND_EXTENSION)),
+            tie_ratio=float(ocfg.get("tie_ratio", TIE_RATIO)),
             persistence_window=int(
                 ocfg.get("persistence_window", em["persistence_window"])
             ),
@@ -480,8 +492,14 @@ def run(cfg: dict, args) -> int:
                 poses = pose_stage.estimate(frame, boxes)
 
             if object_stage is not None:
+                # `boxes` and `poses` are this frame's, computed four lines
+                # up from this frame's tracks. Association must never see one
+                # frame's object boxes against another frame's keypoints: the
+                # two would drift apart by exactly the distance a hand moves in
+                # a frame, which is the same order as the reach being tested.
                 _held, object_events = object_stage.process(
-                    object_dets, poses, emitter, timestamp_us=now_us
+                    object_dets, poses, emitter, timestamp_us=now_us,
+                    person_boxes=boxes,
                 )
                 for event in object_events:
                     emitter.emit(event)

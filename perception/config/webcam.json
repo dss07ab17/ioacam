@@ -88,9 +88,15 @@
     "enabled": false,
     "_comment": "Object detection and wrist attribution. Off by default; --objects overrides. Which classes are detected comes from detector.classes above. Enabling this turns pose on implicitly, because attribution needs wrist keypoints.",
     "margin": 0.25,
-    "_comment_margin": "How far outside an object's box a wrist may be and still count as holding it, as a fraction of box size. Too tight and a phone held at arm's length is never attributed; too loose and a bottle on the desk is attributed to whoever walks past.",
+    "_comment_margin": "Reach FLOOR, as a fraction of the object's own longest side. It is not the main term any more and must not be raised to fix a missed attribution. Measured on logs/run.jsonl, a phone genuinely in the hand sat 0.60 to 1.71 object-widths from the nearest wrist -- so no value of this that catches a phone is also tight enough to reject a cup on the desk. It survives so a hand on the corner of a laptop still counts.",
+    "body_margin": 0.33,
+    "_comment_body_margin": "Reach, as a fraction of the holder's body scale (their longest apparent limb). This is the term that decides small objects, because how far a grip sits from a wrist keypoint is a property of the arm and not of the thing in it. Calibrated by sweep, not by taste: across logs/run.jsonl and logs/both-live.jsonl (held phones) and logs/objects-run2.jsonl (a cup sitting on the desk), every value from 0.30 to 0.35 attributes 100% of the held phones and 0% of the cups. At 0.40 the desk cup starts being attributed. 0.33 is the middle of that plateau.",
+    "hand_extension": 0.35,
+    "_comment_hand_extension": "How far past the wrist the grip is, as a fraction of the forearm. RTMPose has no finger keypoints, so the anchor is the wrist pushed forward along the elbow-to-wrist vector. A forearm is ~26 cm and a gripping hand's centre sits ~9 cm beyond the wrist crease. This is what recovers a phone held in the fingers.",
+    "tie_ratio": 0.1,
+    "_comment_tie_ratio": "Two different people whose nearest anchors differ by less than this fraction of the reach are treated as tied, and the object is attributed to NEITHER. Nearest-anchor between two equally close people is a coin toss, and the engine accumulates evidence against a track_id -- half of those accumulations would be against the wrong person.",
     "min_wrist_score": 0.3,
-    "_comment_min_wrist_score": "Attribution needs a wrist the pose model was reasonably sure about. In a webcam run where wrists averaged 0.30 with only 39% above threshold, a phone was seen 90 times and attributed 3 times -- the wrist, not the object, was the limiting factor.",
+    "_comment_min_wrist_score": "Keypoints below this are predicted positions rather than observed ones and take no part, in any role. Note that a previous note here blamed this setting for logs/both-live.jsonl, where a phone was seen 90 times and attributed 3 times; that was wrong. Replaying the same log through the current geometry attributes 89 of 90 with the same keypoints and the same threshold. The wrist was never the limiting factor -- the reach was.",
     "persistence_window": 30
   },
   "pose": {

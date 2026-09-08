@@ -77,6 +77,9 @@ sys.path.insert(0, str(ROOT / "actions"))
 
 from actions_stage import ActionsStage  # noqa: E402
 from emit import EventEmitter, monotonic_us, wall_time_now  # noqa: E402
+from association import (  # noqa: E402
+    BODY_MARGIN, HAND_EXTENSION, OBJECT_MARGIN,
+)
 from objects import ObjectStage  # noqa: E402
 from perceive import check_preview_available, load_config, open_capture  # noqa: E402
 from pose import PoseStage, person_boxes_from_tracks  # noqa: E402
@@ -178,10 +181,17 @@ def main() -> int:
                         help="run headless, for a smoke test over --save")
     parser.add_argument("--objects", action="store_true",
                         help="also detect the configured object classes and "
-                             "attribute them to the wrist holding them")
-    parser.add_argument("--object-margin", type=float, default=0.25,
-                        help="how far outside an object's box a wrist may be "
-                             "and still count as holding it")
+                             "attribute them to the hand holding them")
+    parser.add_argument("--object-margin", type=float, default=OBJECT_MARGIN,
+                        help="reach floor as a fraction of the object's own "
+                             "box (default %(default)s)")
+    parser.add_argument("--body-margin", type=float, default=BODY_MARGIN,
+                        help="reach as a fraction of the holder's body scale. "
+                             "This, not --object-margin, is what decides a "
+                             "small object (default %(default)s)")
+    parser.add_argument("--hand-extension", type=float, default=HAND_EXTENSION,
+                        help="how far past the wrist the grip is, as a "
+                             "fraction of the forearm (default %(default)s)")
     parser.add_argument("--actions", action="store_true",
                         help="run the full chain: pose -> tube -> PoseC3D -> "
                              "abstention (implies --detector)")
@@ -241,6 +251,8 @@ def main() -> int:
             object_classes=object_classes,
             margin=args.object_margin,
             min_wrist_score=args.min_score,
+            body_margin=args.body_margin,
+            hand_extension=args.hand_extension,
             mode="all",
         )
         emitter = EventEmitter(sensor_id=(cfg or {}).get("sensor_id", "cam-01"))
@@ -369,7 +381,8 @@ def main() -> int:
             if object_stage is not None:
                 t_obj = time.perf_counter()
                 held_objects, object_events = object_stage.process(
-                    object_detections, poses, emitter, timestamp_us=now_us_frame
+                    object_detections, poses, emitter,
+                    timestamp_us=now_us_frame, person_boxes=boxes,
                 )
                 object_frame_ms = (time.perf_counter() - t_obj) * 1000
                 object_ms += object_frame_ms
@@ -418,11 +431,14 @@ def main() -> int:
                 cv2.putText(frame, f"{caption} {held.score:.2f}",
                             (ox1, max(16, oy1 - 6)), cv2.FONT_HERSHEY_SIMPLEX,
                             0.5, colour, 2, cv2.LINE_AA)
-                if held.attributed and held.held_by in poses:
-                    index = 9 if held.wrist == "left_wrist" else 10
-                    wx, wy = poses[held.held_by][index][:2]
+                if held.attributed and held.anchor_point is not None:
+                    # To the anchor that claimed it, which for a held object is
+                    # usually the extrapolated hand rather than any keypoint.
+                    # Drawing to the wrist instead would hide the very
+                    # extrapolation the line exists to let you check.
+                    ax, ay = held.anchor_point
                     cv2.line(frame, (int((ox1 + ox2) / 2), int((oy1 + oy2) / 2)),
-                             (int(wx), int(wy)), colour, 1, cv2.LINE_AA)
+                             (int(ax), int(ay)), colour, 1, cv2.LINE_AA)
 
             for track_id, (result, coverage) in actions.items():
                 if track_id not in boxes:
@@ -487,6 +503,13 @@ def main() -> int:
                             "wrist": held.wrist,
                             "wrist_score": held.wrist_score,
                             "distance_px": held.distance_px,
+                            # Enough to re-derive the decision offline with
+                            # diagnose_association.py without a fresh capture.
+                            "anchor_kind": held.anchor_kind,
+                            "anchor_point": list(held.anchor_point)
+                            if held.anchor_point else None,
+                            "reach_px": held.reach_px,
+                            "outcome": held.report.outcome if held.report else None,
                         }
                         for held in held_objects
                     ],
