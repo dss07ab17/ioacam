@@ -1,0 +1,54 @@
+{
+  "_comment": "DEMO CONFIG -- NOT FOR A SITE. This is the only identity config in the repo, and it is the demo one: the ROC table below is NOT measured. It is a plausible curve for ArcFace on close-range, evenly lit, roughly frontal footage, which is what a laptop webcam produces, and it exists so the pipeline can be seen working end to end before any measurement has been done. A site config is a copy of this file whose ROC has been measured on the site's own cameras and enrolment data. Deploying these numbers unchanged would mean a system whose stated false match rate is a guess.",
+
+  "sensor_id": "cam-demo",
+
+  "face": {
+    "_comment": "Same models as the site config. Only the thresholds differ.",
+    "backend": "arcface-onnx",
+    "detector_model_path": "perception/models/version-RFB-320-int8.onnx",
+    "recognizer_model_path": "identity/models/arcfaceresnet100-11-int8.onnx",
+    "recognizer_sha256": "c625ca68a422418c48aa84f73341337e0a92b111f327909005d1eec07c95f936",
+    "templates_path": "identity/config/templates.json",
+    "require_alignment": true,
+
+    "person_id_pattern": "[A-Z]{2,5}-[0-9]{3,6}",
+    "_comment_person_id_pattern": "The format an enrolment key must match: a person ID such as EMP-4471, never a name. Names are not unique and they change, and the ID is already what the badge reader emits, so the roster, the door and the workflow engine all say the same thing about the same person with no translation step in between -- and the event store holds no personal names on its face. identity/enroll.py validates against this and refuses free text; identity/enrollment.py warns on stderr, naming the key, when templates.json holds one that predates the rule, and loads it anyway rather than dropping somebody's enrolment. Override it for a site whose badge scheme differs; what must not change is that the key is an ID. A human-readable display_name may be enrolled alongside and is shown on screen only.",
+
+    "landmarks": {
+      "_comment": "The Haar eye cascade inside opencv-python. Adequate at laptop distance, unreliable at range. A face whose eyes cannot be found is reported unverified rather than matched unaligned.",
+      "backend": "cascade",
+      "min_neighbors": 6
+    }
+  },
+
+  "directory": {
+    "_comment": "ID -> name, for the screen and nothing else. Events, logs and the event store carry employee_id and never name -- that is the point of keying on an ID, and this block does not change it. An absent file is normal and costs nothing: every label falls back to the badge ID. Columns: employee_id, name, role, department, active. See identity/data/README.md.",
+    "path": "identity/data/employees.csv",
+    "auto_reload": true,
+    "stat_interval_s": 5.0,
+
+    "supply_roles": false,
+    "_comment_supply_roles": "Off, deliberately. With it on, a credential_presented event that carries no role takes one from the directory when the roster is built. That is not cosmetic: the engine uses role for zone rules and for a step's actor_role, so a stale directory role would produce a confident wrong_role finding against somebody who did nothing wrong. Turn it on only for a site whose directory is maintained well enough to carry that, and only where the badge readers genuinely do not send a role. A role that arrives with the credential always wins."
+  },
+
+  "roster": {
+    "_comment": "No access control system in a demo, so nobody badges in. See identity.access_control in the perception config: with no readers the zone/site tier distinction cannot be made and presence_unbadged is suppressed rather than emitted for everyone.",
+    "presence_ttl_s": 43200,
+    "has_exit_readers": false
+  },
+
+  "threshold_policy": {
+    "_comment": "Target loosened from 1e-4 to 1e-3 and the whole curve shifted down. Why the site table cannot be used here: with target 1e-4 and its ROC, two enrolled people already require a 0.82 cosine, which real ArcFace pairs seldom reach even at close range -- so every track reads as unverified and the pipeline looks broken when it is merely being strict. These numbers put the requirement at 0.42 for a small roster, which close-range matches do reach.",
+    "target_false_match_rate": 0.001,
+    "min_margin": 0.05,
+    "floor": 0.28,
+    "roc": [
+      {"threshold": 0.28, "false_match_rate": 0.01},
+      {"threshold": 0.35, "false_match_rate": 0.001},
+      {"threshold": 0.42, "false_match_rate": 0.0001},
+      {"threshold": 0.50, "false_match_rate": 0.00001},
+      {"threshold": 0.58, "false_match_rate": 0.000001}
+    ]
+  }
+}

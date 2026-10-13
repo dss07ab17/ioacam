@@ -1,0 +1,96 @@
+{
+  "name": "16_correlation_lost_on_coverage_loss",
+  "description": "The zone goes blind mid-workflow. Blindness must not be reported as skipped steps.",
+  "final_tick_s": 200,
+  "flush": true,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 2,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "person_in_zone",
+      "value": true,
+      "confidence": 0.9,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 2.5,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_helmet",
+      "value": true,
+      "confidence": 0.88,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 3,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "ppe_glasses",
+      "value": true,
+      "confidence": 0.82,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4471",
+        "role": "operator"
+      },
+      "track_id": "trk-A"
+    },
+    {
+      "t_s": 10,
+      "source": "timer",
+      "sensor_id": "cam-01",
+      "observation": "sensor_health",
+      "value": "unhealthy",
+      "confidence": 1.0
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "unknown",
+      "zone_id": "zone-assembly-4",
+      "route": "maintenance",
+      "detail_contains": "coverage lost"
+    },
+    {
+      "verdict": "unknown",
+      "instance_id": "wf-assembly-station-4#1",
+      "route": "review_queue",
+      "detail_contains": "lost sensor coverage"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "violation"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

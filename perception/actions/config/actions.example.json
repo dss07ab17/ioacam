@@ -1,0 +1,64 @@
+{
+  "_comment": "PoseC3D is the default: fast enough for live, robust to the noisy pose you get at range, and extensible to object actions by enabling the RGB branch. Backend is a config choice, so licence and hardware requirements are properties of the backend, not the pipeline.",
+  "backend": "posec3d",
+  "model_path": "perception/models/posec3d_pose_only.onnx",
+  "device": "cpu",
+  "_comment_device": "Pose-only PoseC3D is small enough that on-device is plausible; measured at ~157 ms per tube on a laptop CPU through onnxruntime, against ~17 ms to build the volume. Enabling rgb_branch adds a pixel pathway and may push it to an on-premise GPU, at which point the device stops being self-contained.",
+  "num_frames": 32,
+  "heatmap_size": 56,
+  "num_keypoints": 17,
+  "rgb_branch": false,
+  "_comment_rgb_branch": "Off for live body-motion work. A skeleton cannot see what is in the hand, so turn this on only when object-involving classes (phone vs spanner, tool handling) need training. It costs compute and requires the RGBPose-Conv3D export.",
+  "classes": "ntu60",
+  "_comment_classes": "'ntu60' names the stock checkpoint's own 60-class vocabulary (see posec3d.NTU60_CLASSES) rather than pasting sixty strings here where they could drift out of the checkpoint's order -- a reordered list relabels every prediction with no error anywhere. The head is NTU RGB+D: daily-living actions recorded in a lab (drink water, brushing teeth, taking a selfie), of which almost nothing applies to a factory floor. On real footage it abstains nearly always, which is the abstention policy working, not a bug. For site classes replace cls_head.fc_cls with your class count, fine-tune, re-export, and list the names here; the 512-d backbone features are what you are keeping. Each class is a labelling commitment of a few hundred clips.",
+  "_comment_classes_site_example": [
+    "standing",
+    "walking",
+    "carrying",
+    "reaching",
+    "climbing",
+    "falling"
+  ],
+  "pose": {
+    "backend": "rtmpose",
+    "model_path": "perception/models/rtmpose_t.onnx",
+    "device": "cpu",
+    "input_size": [
+      192,
+      256
+    ],
+    "simcc_split_ratio": 2.0,
+    "num_keypoints": 17,
+    "max_batch": 8,
+    "_comment": "Pose runs before the action model, so this is two models on the NPU, not one. That is the compute measurement still outstanding on the board. The tiny variant is the default for that reason; rtmpose-m is more accurate and roughly three times the cost.",
+    "_comment_shape": "Read off the checkpoint, not chosen: the SimCC head emits 384 x-bins and 512 y-bins, which is 192x256 at a split ratio of 2.0. Change input_size or simcc_split_ratio without re-exporting and every keypoint is scaled by the ratio of the two bin counts -- it does not crash, it returns a plausible skeleton in the wrong place. rtmpose.py checks the graph against these at first inference.",
+    "_comment_export": "Produce the .onnx with: python3 perception/tools/export_rtmpose.py. MMPose is deliberately not a dependency; the conversion runs offline from the published .pth."
+  },
+  "tube": {
+    "window_s": 1.5,
+    "box_margin": 0.1,
+    "sigma": 0.6,
+    "min_keypoint_score": 0.15,
+    "_comment_window": "Every action model is inherently late by its window length; you cannot classify an action before it has happened. For live use the window is a latency budget as much as an accuracy knob. 1.5s trades a little accuracy on slow actions for half a second of responsiveness.",
+    "_comment_min_keypoint_score": "Below this a keypoint contributes nothing at all. Plotting it at its guessed position would assert a joint location there is no evidence for.",
+    "_comment_sigma": "0.6 for pose-only. The RGBPose config uses 0.7; they are not interchangeable."
+  },
+  "abstention": {
+    "min_confidence": 0.55,
+    "min_margin": 0.15,
+    "temperature": 1.0,
+    "per_class_confidence": {
+      "reaching": 0.7,
+      "carrying": 0.7
+    }
+  },
+  "fusion": {
+    "enabled": false,
+    "_comment": "For a second opinion from a different model family, e.g. pose-only PoseC3D against the RGBPose variant. Agreement raises confidence, disagreement abstains.",
+    "rgb_weight": 0.65,
+    "skeleton_weight": 0.35,
+    "agreement_bonus": 1.1,
+    "disagreement_penalty": 0.55
+  },
+  "_comment_shape": "Read off the published pose_only checkpoint: clip_len=32, scale=(56,56), hw_ratio=1.0, 17 keypoint channels on backbone.conv1. The network was fitted to these; changing them without retraining silently costs accuracy. The RGBPose variant uses different numbers (RGB 8 / pose 32, 64x64) -- do not carry those over."
+}

@@ -1,0 +1,5 @@
+employee_id,name,role,department,active
+EMP-4471,Rajesh Kumar,operator,Assembly,yes
+EMP-5522,Priya Nair,maintenance_engineer,Maintenance,yes
+EMP-9012,Daniel Okafor,operator,Assembly,no
+EMP-0001,Sashank,Operator,Security,yes

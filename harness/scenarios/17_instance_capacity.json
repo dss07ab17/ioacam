@@ -1,0 +1,96 @@
+{
+  "name": "17_instance_capacity",
+  "description": "More concurrent instances than declared. Usually tracker id churn, so route to maintenance.",
+  "final_tick_s": 20,
+  "events": [
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-1",
+        "role": "operator"
+      },
+      "track_id": "trk-1"
+    },
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-2",
+        "role": "operator"
+      },
+      "track_id": "trk-2"
+    },
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-3",
+        "role": "operator"
+      },
+      "track_id": "trk-3"
+    },
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-4",
+        "role": "operator"
+      },
+      "track_id": "trk-4"
+    },
+    {
+      "t_s": 0,
+      "source": "camera",
+      "sensor_id": "cam-01",
+      "observation": "object_at_station",
+      "value": true,
+      "confidence": 0.95,
+      "zone_id": "zone-assembly-4",
+      "subject": {
+        "class": "human",
+        "identity": "EMP-5",
+        "role": "operator"
+      },
+      "track_id": "trk-5"
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "unknown",
+      "severity": "warning",
+      "route": "maintenance",
+      "detail_contains": "at capacity"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "violation"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}

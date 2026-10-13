@@ -1,0 +1,54 @@
+# Core dependencies for iOACAM Workflow Engine
+
+# Perception layer (camera detection)
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# The detector backend is a config choice (perception/config/README.md).
+# The default, yolox-onnx, needs nothing beyond the opencv above: it runs the
+# Apache-2.0 YOLOX graph fetched by perception/tools/fetch_model.py through
+# cv2.dnn. That is why it is the default -- the permissive option is also the
+# lightest one.
+#
+# The yolo26 backend needs onnxruntime and has no cv2.dnn fallback: OpenCV's
+# DNN importer does not accept the end-to-end head's ops. It is AGPL-3.0 in
+# both code and weights and is for internal evaluation only -- see
+# perception/LICENCE-NOTES.md.
+#
+# The same package is what the RTMPose pose backend
+# (perception/actions/rtmpose.py) wants, and the face detector
+# (perception/face/rfb_onnx.py) requires. Pose is the one case with a
+# fallback: without onnxruntime it uses the cv2.dnn already needed for
+# capture, at about 4x the cost and one person per session call. One line
+# covers all three -- uncomment it once.
+# onnxruntime>=1.16.0
+
+# Export only, never on the inference path or the device: converting the
+# published RTMPose .pth to ONNX once, offline, with
+# perception/tools/export_rtmpose.py. MMPose is deliberately not needed.
+# torch>=2.0.0
+# onnx>=1.14.0
+
+# Export only, on the same terms and for the same reason: converting a YOLO26
+# .pt to an NMS-free ONNX graph once, offline, with
+# perception/tools/export_yolo26.py. AGPL-3.0 -- installing it is fine for
+# internal evaluation and is not distribution, but it must never reach the
+# inference path: perception/detectors/yolo26.py imports onnxruntime, numpy and
+# the OpenCV already required above -- and nothing from ultralytics, which is
+# what keeps the RK3568 port a conversion job.
+# ultralytics>=8.4
+
+# The employee directory (identity/data/employees.csv) needs nothing: it is
+# read with the stdlib `csv` module. That is why it is a CSV and not an .xlsx
+# -- an .xlsx would mean openpyxl on the device to read five columns, and the
+# file still opens in Excel as it is. It is also entirely optional: with no
+# file, every label falls back to the badge ID. See identity/data/README.md.
+
+# Testing
+pytest>=7.4.0
+pytest-timeout>=2.2.0
+
+# Linting and type checking (optional, for development)
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0

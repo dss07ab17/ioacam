@@ -1,0 +1,167 @@
+{
+  "sensor_id": "cam-01",
+  "camera": {
+    "index": 0,
+    "width": 1280,
+    "height": 720,
+    "fps": 15
+  },
+  "detector": {
+    "backend": "yolo26",
+    "_comment_backend": "Which detector runs. Valid values: 'yolox-onnx' (Apache-2.0, the default, the one intended to ship), 'yolo26' (Ultralytics YOLO26, NMS-free end-to-end, AGPL-3.0 code AND weights -- internal evaluation only, needs perception/models/yolo26n.onnx from tools/export_yolo26.py and input_size [640, 640]), 'ultralytics' (AGPL-3.0, evaluation only, also needs acknowledge_agpl: true), 'stub' (scripted boxes, tests). Nothing outside perception/detectors/ knows which one is running, so this is the whole switch. Read perception/LICENCE-NOTES.md before choosing either AGPL backend: an ONNX export does not relicense Ultralytics weights.",
+    "classes": [
+      "person",
+      "cell phone",
+      "laptop",
+      "bottle",
+      "cup",
+      "backpack",
+      "handbag",
+      "book",
+      "scissors",
+      "knife"
+    ],
+    "_comment_classes": "Which of the detector's 80 COCO classes this site cares about. Both COCO backends -- yolox-onnx and yolo26 -- read this key with the same meaning, from the same shared code in perception/detectors/coco.py, so the list survives a backend switch unchanged. 'person' drives tracking, zones and pose; the rest are objects, attributed to whoever is holding them. A different site wants a different list, which is why it lives here rather than in a backend module. Only COCO names are valid -- the model knows nothing else, and a site-specific object (a torque wrench, a specific tool) needs a detector trained on it. An unknown name is rejected at construction rather than silently returning nothing.",
+    "class_thresholds": {
+      "person": 0.35,
+      "cell phone": 0.5,
+      "laptop": 0.5,
+      "bottle": 0.5,
+      "cup": 0.5,
+      "backpack": 0.5,
+      "handbag": 0.55,
+      "book": 0.55,
+      "scissors": 0.55,
+      "knife": 0.6
+    },
+    "_comment_class_thresholds": "One threshold cannot serve a person filling the frame and a phone 40 px across. Small objects score lower when they are really there AND produce more false positives, so each class gets its own floor. 'knife' and 'scissors' are highest deliberately: COCO confuses them with pens, cutlery and phone edges, and a false knife is the most expensive false positive in this list. Tune these against a logged run (preview_pose.py --objects --log) before trusting any of them.",
+    "model_path": "perception/models/yolo26n.onnx",
+    "input_size": [
+      640,
+      640
+    ],
+    "score_threshold": 0.35,
+    "nms_threshold": 0.45
+  },
+  "calibration": {
+    "temperature": 1.8
+  },
+  "zones": [
+    {
+      "zone_id": "zone-assembly-4",
+      "coordinates": "normalized",
+      "polygon": [
+        [
+          0.35,
+          0.05
+        ],
+        [
+          1.0,
+          0.05
+        ],
+        [
+          1.0,
+          1.0
+        ],
+        [
+          0.35,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "emission": {
+    "enter_frames": 4,
+    "exit_frames": 8,
+    "persistence_window": 30,
+    "min_confidence": 0.05,
+    "emit_person_count": true,
+    "count_debounce_frames": 6
+  },
+  "quality": {
+    "reference_height_px": 400,
+    "min_height_px": 60
+  },
+  "integrity": {
+    "enabled": false
+  },
+  "identity": {
+    "config": null,
+    "_comment": "Face recognition inside the perception loop, binding person tracks to enrolled person IDs. Off unless a path is set here or --identity is passed: naming people is a heavier proposition, legally and operationally, than counting them, and the regulatory note in identity/README.md is why it is not a default. With it on, every camera event for a BOUND track carries subject.identity -- person_in_zone, person_left_zone, action_recognised, action_interval, ppe_helmet and ppe_vest -- while a track the cascade did not bind carries NO identity key at all, rather than an empty or 'unknown' one. That distinction is load-bearing: the engine's wrong_role rules test for a role they can act on and would read a placeholder as an answer. track_id is kept beside the identity and never replaced by it, because the track id is what the camera observed while the identity is an inference about who that was, and an attribution has to stay questionable. Needs onnxruntime, the RFB-320 face detector and an ArcFace model; see identity/README.md."
+  },
+  "objects": {
+    "enabled": false,
+    "_comment": "Object detection and hand attribution. Off by default; --objects overrides. Which classes are detected comes from detector.classes above. Enabling this turns pose on implicitly, because attribution needs arm keypoints.",
+    "margin": 0.25,
+    "_comment_margin": "Reach FLOOR, as a fraction of the object's own longest side. It is not the main term any more and must not be raised to fix a missed attribution. Measured on logs/run.jsonl, a phone genuinely in the hand sat 0.60 to 1.71 object-widths from the nearest wrist -- so no value of this that catches a phone is also tight enough to reject a cup on the desk. It survives so a hand on the corner of a laptop still counts.",
+    "body_margin": 0.33,
+    "_comment_body_margin": "Reach, as a fraction of the holder's body scale (their longest apparent limb). This is the term that decides small objects, because how far a grip sits from a wrist keypoint is a property of the arm and not of the thing in it. Calibrated by sweep, not by taste: across logs/run.jsonl and logs/both-live.jsonl (held phones) and logs/objects-run2.jsonl (a cup sitting on the desk), every value from 0.30 to 0.35 attributes 100% of the held phones and 0% of the cups. At 0.40 the desk cup starts being attributed. 0.33 is the middle of that plateau.",
+    "hand_extension": 0.35,
+    "_comment_hand_extension": "How far past the wrist the grip is, as a fraction of the forearm. RTMPose has no finger keypoints, so the anchor is the wrist pushed forward along the elbow-to-wrist vector. A forearm is ~26 cm and a gripping hand's centre sits ~9 cm beyond the wrist crease. This is what recovers a phone held in the fingers.",
+    "tie_ratio": 0.1,
+    "_comment_tie_ratio": "Two different people whose nearest anchors differ by less than this fraction of the reach are treated as tied, and the object is attributed to NEITHER. Nearest-anchor between two equally close people is a coin toss, and the engine accumulates evidence against a track_id -- half of those accumulations would be against the wrong person.",
+    "min_wrist_score": 0.3,
+    "_comment_min_wrist_score": "Keypoints below this are predicted positions rather than observed ones and take no part, in any role. Note that a previous note here blamed this setting for logs/both-live.jsonl, where a phone was seen 90 times and attributed 3 times; that was wrong. Replaying the same log through the current geometry attributes 89 of 90 with the same keypoints and the same threshold. The wrist was never the limiting factor -- the reach was.",
+    "persistence_window": 30
+  },
+  "ppe": {
+    "enabled": false,
+    "_comment": "A SECOND detector, run on every frame alongside the person one, for hard hats and high-vis vests. Off by default; --ppe overrides. Neither class exists in COCO, so this cannot be folded into detector.classes -- it is a different checkpoint and therefore a whole extra forward pass. On this repo's machine that is ~54 ms at 640, near enough to doubling detection cost; perception/config/README.md has the measured table and every run prints its own figure at shutdown. Unlike objects, it does NOT imply pose: a hard hat is associated to a person by being inside their box, not by being near a keypoint.",
+    "backend": "yolo26-ppe",
+    "_comment_backend": "The only PPE backend, and AGPL-3.0 like the other Ultralytics ones -- read perception/LICENCE-NOTES.md, and note there is no non-AGPL alternative for this one. This key does NOT replace detector.backend: that still selects the person detector, which keeps owning tracking, zones, occupancy and pose. Naming a person backend here is rejected at startup rather than silently running yolox twice and emitting no PPE.",
+    "model_path": "perception/models/ppe_yolo26.onnx",
+    "_comment_model_path": "YOLO26n fine-tuned on a construction-site-safety set. Not a download: tools/export_yolo26.py does not produce this and has no --download for it.",
+    "input_size": [
+      640,
+      640
+    ],
+    "classes": [
+      "Hardhat",
+      "NO-Hardhat",
+      "Safety Vest",
+      "NO-Safety Vest"
+    ],
+    "_comment_classes": "Which of the model's ten classes run. These four are the ones that map onto an observation the schema actually has: Hardhat/NO-Hardhat -> ppe_helmet true/false, Safety Vest/NO-Safety Vest -> ppe_vest true/false. Names are CASE-SENSITIVE and are not COCO's -- 'person' is rejected, 'Person' is this model's own person class and must stay off, or two detectors would put two boxes on every body with nothing able to tell they are the same one. 'Mask' and 'NO-Mask' are detectable and emit nothing: the schema's observation list is closed and has no mask entry, and a mask is not ppe_glasses. 'Safety Cone', 'machinery' and 'vehicle' are scene furniture with no PPE meaning.",
+    "class_thresholds": {
+      "Hardhat": 0.4,
+      "Safety Vest": 0.4,
+      "NO-Hardhat": 0.2,
+      "NO-Safety Vest": 0.2
+    },
+    "_comment_class_thresholds": "Asymmetric on purpose, and this is the setting that matters most on this stage. Measured recall on the NO-* classes is 0.55-0.62 -- an unworn hard hat is a smaller, less distinctive visual event than a worn one, because there is no object to find. The costs are asymmetric the other way: a false 'no helmet' costs somebody walking over to look, a missed one costs an unprotected head on a live floor. So the NO-* classes are floored at 0.20 against 0.40 for the positives, and the over-flagging that follows is the intended trade rather than a defect to tune away. Delete this whole key to take the model's own measured defaults from perception/detectors/ppe.py. A name that is not one of the ten is rejected at startup rather than silently never applied.",
+    "min_containment": 0.7,
+    "_comment_min_containment": "Fraction of the PPE box that must fall inside a person's box before that person is a candidate to be wearing it. Containment and not IoU: a hard hat is 1-2% of a standing person's area and would score an IoU near 0.02 against the person genuinely wearing it. Not 1.0 either: a hat on somebody at the edge of frame is clipped by the person box as often as not.",
+    "tie_ratio": 0.1,
+    "_comment_tie_ratio": "Two people whose boxes both contain the hat, within this fraction on both containment and area, are treated as tied and the hat is attributed to NEITHER -- the same refusal objects.tie_ratio makes, for the same reason. It is still EMITTED, with no track_id: an unattributable bare head is not the same fact as no bare head, and dropping it would make those two the same stream.",
+    "loose_frames": 3,
+    "_comment_loose_frames": "Consecutive frames a PPE box must stay unattributed before it is announced as such. Same debounce emission.enter_frames applies to zone entry, for the same reason. Measured on a live webcam run, containment is bimodal -- 0.98 to 1.00 on every frame a person box exists, 0.0 on the frames none does, nothing in between -- so a lone unattributed frame is the person detector missing a frame, not a marginal association, and announcing it reports an ownerless hard hat one frame before it attaches to the person wearing it. Only UNATTRIBUTED findings wait: an attributed one emits on the frame it is seen, because delaying a non-compliance is the one cost this stage must not pay.",
+    "forget_after": 15,
+    "_comment_forget_after": "Frames a person track may be missing before their compliance state, and any PPE attributed to them, is dropped. perceive.py defaults it to tracking.max_misses, which is what it has to match: person_boxes carries only the tracks matched THIS frame, so without this a single missed detection turns a hat that never moved into an unattributed one.",
+    "persistence_window": 30,
+    "min_confidence": 0.05,
+    "_comment_absence": "Nothing is emitted about a person the model said nothing about. A missing Hardhat detection is not inferred to be a bare head -- a person facing away, half out of frame or 20 px tall produces no hat detection for reasons that have nothing to do with what they are wearing. Only an actual NO-Hardhat box produces ppe_helmet false."
+  },
+  "pose": {
+    "enabled": false,
+    "_comment": "RTMPose keypoint estimation. Off by default; enabled implicitly by objects or actions. Needs the exported model: python perception/tools/export_rtmpose.py",
+    "backend": "rtmpose",
+    "model_path": "perception/models/rtmpose_t.onnx",
+    "runtime": "auto",
+    "_comment_runtime": "'auto' prefers onnxruntime and falls back to cv2.dnn, which is roughly 4x slower.",
+    "device": "cpu"
+  },
+  "actions": {
+    "enabled": false,
+    "_comment": "PoseC3D action recognition. Off by default; --actions overrides. Needs the exported model: python perception/tools/export_posec3d.py. NOTE: action recognition needs the WHOLE BODY in frame. Hips and knees carry most of the signal and a laptop webcam at desk distance sees neither, which shows up as near-total abstention.",
+    "backend": "posec3d",
+    "model_path": "perception/models/posec3d_pose_only.onnx",
+    "every_s": 1.0,
+    "_comment_every_s": "Seconds between inferences per track. PoseC3D costs ~130-185 ms and reads a ~2 s window, so running it per frame would re-analyse almost the same window at full price. This is a latency budget as much as a cost control: no action model can classify an action before it has happened.",
+    "device": "cpu",
+    "classes": "ntu60",
+    "_comment_classes": "'ntu60' is the stock checkpoint's vocabulary -- 'drink water', 'taking a selfie'. Nothing about workflows. Site classes mean replacing cls_head.fc_cls and fine-tuning; supply a list here once you have.",
+    "min_confidence": 0.55,
+    "min_margin": 0.15,
+    "_comment_abstention": "Both tests must pass or the result is an abstention, emitted as value 'unknown'. min_margin matters more than it looks: two classes at 0.41 and 0.39 is not a recognition, and on a real floor the confusable pairs are exactly the ones that matter."
+  }
+}

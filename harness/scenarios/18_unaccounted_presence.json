@@ -1,0 +1,35 @@
+{
+  "name": "18_unaccounted_presence",
+  "description": "Someone present whom no badge accounts for. A door-only product cannot see this.",
+  "final_tick_s": 10,
+  "events": [
+    {
+      "t_s": 1,
+      "source": "camera",
+      "sensor_id": "cam-02",
+      "observation": "identity_unverified",
+      "value": "no confident match against zone roster or site roster",
+      "confidence": 1.0,
+      "zone_id": "zone-robot-cell-3",
+      "track_id": "trk-U",
+      "subject": {
+        "class": "human"
+      }
+    }
+  ],
+  "expect": [
+    {
+      "verdict": "violation",
+      "zone_id": "zone-robot-cell-3",
+      "severity": "safety_relevant",
+      "response": "alarm_escalate_and_request_mitigation",
+      "detail_contains": "unaccounted presence"
+    }
+  ],
+  "forbid": [
+    {
+      "verdict": "unknown"
+    }
+  ],
+  "policy": "workflows/example_manufacturing_policy.json"
+}
